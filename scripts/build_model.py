@@ -1008,6 +1008,9 @@ def build_adjustments_tab(wb):
               "all analytical reclassifications. Adjusted tabs pass through from Standardized tabs.",
     ).font = BLACK_FONT
 
+    # Freeze panes at A2 (documentation tab -- just freeze title row)
+    freeze_panes(ws, row=2, col=1)
+
     return ws
 
 
@@ -1152,6 +1155,9 @@ def build_ratio_definitions(wb):
             r += 1
 
         r += 1  # blank row between sections
+
+    # Freeze panes at A2 (documentation tab -- just freeze title row)
+    freeze_panes(ws, row=2, col=1)
 
     return ws
 
@@ -1514,8 +1520,8 @@ def build_ratio_tab(wb, adj_sheet_name, output_sheet_name):
                      f"=IF({adj}!{cl}33=0,0,"
                      f"(1-{adj}!{cl}40*{adj}!{cl}38/1000/{adj}!{cl}33)*{cl}6)")
 
-    # Freeze panes at B5
-    freeze_panes(ws, row=5, col=2)
+    # Freeze panes at B4 (below title, subtitle, year headers)
+    freeze_panes(ws, row=4, col=2)
 
     return ws
 
@@ -1583,8 +1589,8 @@ def build_ratio_comparison(wb):
 
         r += 1  # blank row between ratio groups
 
-    # Freeze panes at B5
-    freeze_panes(ws, row=5, col=2)
+    # Freeze panes at B4 (below title, subtitle, year headers)
+    freeze_panes(ws, row=4, col=2)
 
     return ws
 
@@ -3389,8 +3395,8 @@ def build_valuation_tab(wb):
     cell.alignment = Alignment(horizontal="center")
     style_double_line_row(ws, r, MAX_COL)
 
-    # --- Freeze panes at B4 ---
-    freeze_panes(ws, row=4, col=2)
+    # --- Freeze panes at B3 (below title and currency row) ---
+    freeze_panes(ws, row=3, col=2)
 
     return ws
 
