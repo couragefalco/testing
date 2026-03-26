@@ -16,6 +16,8 @@ from scripts.formatting import (
     BLACK_BOLD,
     GREEN_FONT,
     YELLOW_FILL,
+    HEADER_FILL,
+    THIN_BORDER,
     FMT_CURRENCY,
     FMT_PERCENT,
     FMT_YEAR,
@@ -2310,6 +2312,1090 @@ def build_forecast_tab(wb):
 
 
 # ---------------------------------------------------------------------------
+# Valuation tab
+# ---------------------------------------------------------------------------
+def build_valuation_tab(wb):
+    """Build the 'Valuation' sheet with WACC, DCF (FCFF & FCFE), PVAOI, PVAE,
+    Sensitivity Tables, Comparable Company Analysis, and Football Field summary.
+
+    All cross-sheet references point to 'Forecast' and 'Adj ASM'.
+    """
+    ws = wb.create_sheet(title="Valuation")
+    MAX_COL = 10  # A-J to match Forecast layout
+
+    # Quoted sheet names for formulas
+    FCAST = "'Forecast'"
+    ADJ = "'Adj ASM'"
+
+    # Column widths: A=45, B-J=14
+    widths = {1: 45}
+    for c in range(2, MAX_COL + 1):
+        widths[c] = 14
+    set_column_widths(ws, widths=widths)
+
+    # Forecast column letters: E=2025E .. J=2030E (columns 5-10)
+    FCST_COLS = [5, 6, 7, 8, 9, 10]  # column indices
+    FCST_YEAR_LABELS = ["2025E", "2026E", "2027E", "2028E", "2029E", "2030E"]
+
+    def cl(col_idx):
+        return get_column_letter(col_idx)
+
+    # =========================================================================
+    # Title
+    # =========================================================================
+    r = 1
+    cell = ws.cell(row=r, column=1, value="ASM International NV - Valuation Analysis")
+    cell.font = Font(size=14, bold=True, color="000000")
+
+    r = 2
+    ws.cell(row=r, column=1, value="(EUR 000)").font = Font(size=10, italic=True, color="666666")
+
+    # =========================================================================
+    # Section 1: COST OF CAPITAL (rows 3-22)
+    # =========================================================================
+    r = 3
+    style_section_header(ws, r, MAX_COL, "COST OF CAPITAL")
+
+    r = 4  # blank
+
+    # Row 5: Risk-free Rate
+    r = 5
+    write_label(ws, r, 1, "Risk-free Rate")
+    cell = ws.cell(row=r, column=2, value=0.025)
+    style_assumption_cell(cell, FMT_PERCENT)
+    RF_ROW = r
+
+    # Row 6: Equity Beta
+    r = 6
+    write_label(ws, r, 1, "Equity Beta")
+    cell = ws.cell(row=r, column=2, value=1.30)
+    style_assumption_cell(cell, FMT_RATIO)
+    BETA_ROW = r
+
+    # Row 7: Equity Risk Premium
+    r = 7
+    write_label(ws, r, 1, "Equity Risk Premium")
+    cell = ws.cell(row=r, column=2, value=0.05)
+    style_assumption_cell(cell, FMT_PERCENT)
+    ERP_ROW = r
+
+    # Row 8: Cost of Equity (Re) = CAPM
+    r = 8
+    write_label(ws, r, 1, "Cost of Equity (Re)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{RF_ROW}+B{BETA_ROW}*B{ERP_ROW}"
+    style_formula_cell(cell, FMT_PERCENT)
+    RE_ROW = r
+
+    r = 9  # blank
+
+    # Row 10: Cost of Debt (pre-tax) = |Interest Expense| / Total Debt
+    r = 10
+    write_label(ws, r, 1, "Cost of Debt (pre-tax)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF({ADJ}!G78<>0,ABS({ADJ}!G29)/{ADJ}!G78,0)"
+    style_formula_cell(cell, FMT_PERCENT)
+    KD_PRE_ROW = r
+
+    # Row 11: Tax Rate (from Forecast)
+    r = 11
+    write_label(ws, r, 1, "Tax Rate")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"={FCAST}!G11"
+    style_crossref_cell(cell, FMT_PERCENT)
+    TAX_ROW = r
+
+    # Row 12: Cost of Debt (after-tax)
+    r = 12
+    write_label(ws, r, 1, "Cost of Debt (after-tax)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{KD_PRE_ROW}*(1-B{TAX_ROW})"
+    style_formula_cell(cell, FMT_PERCENT)
+    KD_POST_ROW = r
+
+    r = 13  # blank
+
+    # Row 14: Market Cap (EUR 000)
+    r = 14
+    write_label(ws, r, 1, "Market Cap (EUR 000)")
+    cell = ws.cell(row=r, column=2, value=25000000)
+    style_assumption_cell(cell, FMT_CURRENCY)
+    MCAP_ROW = r
+
+    # Row 15: Net Debt
+    r = 15
+    write_label(ws, r, 1, "Net Debt")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"={ADJ}!G80"
+    style_crossref_cell(cell, FMT_CURRENCY)
+    NET_DEBT_ROW = r
+
+    # Row 16: E/V = MarketCap / (MarketCap + NetDebt)
+    r = 16
+    write_label(ws, r, 1, "E/V")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF((B{MCAP_ROW}+B{NET_DEBT_ROW})<>0,B{MCAP_ROW}/(B{MCAP_ROW}+B{NET_DEBT_ROW}),0)"
+    style_formula_cell(cell, FMT_PERCENT)
+    EV_RATIO_ROW = r
+
+    # Row 17: D/V = 1 - E/V
+    r = 17
+    write_label(ws, r, 1, "D/V")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=1-B{EV_RATIO_ROW}"
+    style_formula_cell(cell, FMT_PERCENT)
+    DV_RATIO_ROW = r
+
+    # Row 18: WACC
+    r = 18
+    write_label(ws, r, 1, "WACC", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{EV_RATIO_ROW}*B{RE_ROW}+B{DV_RATIO_ROW}*B{KD_POST_ROW}"
+    style_formula_cell(cell, FMT_PERCENT)
+    cell.font = BLACK_BOLD
+    WACC_ROW = r
+
+    r = 19  # blank
+
+    # Row 20: Shares Outstanding (000)
+    r = 20
+    write_label(ws, r, 1, "Shares Outstanding (diluted)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"={ADJ}!G38"
+    style_crossref_cell(cell, FMT_CURRENCY)
+    SHARES_ROW = r
+
+    # Row 21: Current Share Price
+    r = 21
+    write_label(ws, r, 1, "Current Share Price (EUR)")
+    cell = ws.cell(row=r, column=2, value=450)
+    style_assumption_cell(cell, '#,##0.00')
+    PRICE_ROW = r
+
+    # Row 22: Terminal Growth Rate
+    r = 22
+    write_label(ws, r, 1, "Terminal Growth Rate")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"={FCAST}!J16"
+    style_crossref_cell(cell, FMT_PERCENT)
+    TERM_G_ROW = r
+
+    r = 23  # blank
+
+    # =========================================================================
+    # Section 2: DCF - FREE CASH FLOW TO DEBT & EQUITY (rows 25-39)
+    # =========================================================================
+    r = 25
+    style_section_header(ws, r, MAX_COL, "DCF - FREE CASH FLOW TO DEBT & EQUITY")
+
+    r = 26  # blank
+
+    # Row 27: Year headers (E-J only)
+    r = 27
+    for i, yr in enumerate(FCST_YEAR_LABELS):
+        cell = ws.cell(row=r, column=FCST_COLS[i], value=yr)
+        cell.font = BLACK_BOLD
+        cell.number_format = FMT_YEAR
+        cell.alignment = Alignment(horizontal="center")
+        cell.fill = HEADER_FILL
+        cell.border = THIN_BORDER
+
+    # Row 28: FCF to D&E (from Forecast row 59)
+    r = 28
+    write_label(ws, r, 1, "FCF to Debt & Equity")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={FCAST}!{c}59"
+        style_crossref_cell(cell, FMT_CURRENCY)
+    FCF_DE_ROW = r
+
+    # Row 29: Terminal Value (only in last col = J = column 10)
+    r = 29
+    write_label(ws, r, 1, "Terminal Value")
+    cell = ws.cell(row=r, column=10)
+    cell.value = f"=J{FCF_DE_ROW}*(1+$B${TERM_G_ROW})/($B${WACC_ROW}-$B${TERM_G_ROW})"
+    style_formula_cell(cell, FMT_CURRENCY)
+    TV_DE_ROW = r
+
+    # Row 30: Total CF
+    r = 30
+    write_label(ws, r, 1, "Total Cash Flow")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        if ci < 10:
+            cell.value = f"={c}{FCF_DE_ROW}"
+        else:
+            cell.value = f"={c}{FCF_DE_ROW}+{c}{TV_DE_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    TOTAL_CF_DE_ROW = r
+
+    # Row 31: Discount Factor = 1/(1+WACC)^n
+    r = 31
+    write_label(ws, r, 1, "Discount Factor")
+    for i, ci in enumerate(FCST_COLS):
+        n = i + 1
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=1/(1+$B${WACC_ROW})^{n}"
+        style_formula_cell(cell, '0.0000')
+    DF_DE_ROW = r
+
+    # Row 32: PV of CF
+    r = 32
+    write_label(ws, r, 1, "PV of Cash Flow")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{TOTAL_CF_DE_ROW}*{c}{DF_DE_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    PV_CF_DE_ROW = r
+
+    r = 33  # blank
+
+    # Row 34: Sum of PV
+    r = 34
+    write_label(ws, r, 1, "Sum of PV of Cash Flows", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=SUM(E{PV_CF_DE_ROW}:J{PV_CF_DE_ROW})"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    SUM_PV_DE_ROW = r
+
+    # Row 35: Enterprise Value
+    r = 35
+    write_label(ws, r, 1, "Enterprise Value")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{SUM_PV_DE_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    EV_DE_ROW = r
+
+    # Row 36: - Net Debt
+    r = 36
+    write_label(ws, r, 1, "- Net Debt")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{NET_DEBT_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+
+    # Row 37: = Equity Value
+    r = 37
+    write_label(ws, r, 1, "= Equity Value", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{EV_DE_ROW}-B36"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    EQ_VAL_DE_ROW = r
+
+    # Row 38: / Shares
+    r = 38
+    write_label(ws, r, 1, "/ Shares Outstanding")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{SHARES_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+
+    # Row 39: Implied Price (DCF FCFF)
+    r = 39
+    write_label(ws, r, 1, "Implied Price (DCF FCFF)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF(B38<>0,B{EQ_VAL_DE_ROW}/B38*1000,0)"
+    style_formula_cell(cell, '#,##0.00')
+    cell.font = BLACK_BOLD
+    style_double_line_row(ws, r, MAX_COL)
+    PRICE_DCF_FCFF_ROW = r
+
+    r = 40  # blank
+
+    # =========================================================================
+    # Section 3: DCF - FREE CASH FLOW TO EQUITY (rows 42-55)
+    # =========================================================================
+    r = 42
+    style_section_header(ws, r, MAX_COL, "DCF - FREE CASH FLOW TO EQUITY")
+
+    r = 43  # blank
+
+    # Row 44: Year headers
+    r = 44
+    for i, yr in enumerate(FCST_YEAR_LABELS):
+        cell = ws.cell(row=r, column=FCST_COLS[i], value=yr)
+        cell.font = BLACK_BOLD
+        cell.number_format = FMT_YEAR
+        cell.alignment = Alignment(horizontal="center")
+        cell.fill = HEADER_FILL
+        cell.border = THIN_BORDER
+
+    # Row 45: FCFE (from Forecast row 62)
+    r = 45
+    write_label(ws, r, 1, "FCF to Equity")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={FCAST}!{c}62"
+        style_crossref_cell(cell, FMT_CURRENCY)
+    FCFE_ROW = r
+
+    # Row 46: Terminal Value (FCFE)
+    r = 46
+    write_label(ws, r, 1, "Terminal Value")
+    cell = ws.cell(row=r, column=10)
+    cell.value = f"=J{FCFE_ROW}*(1+$B${TERM_G_ROW})/($B${RE_ROW}-$B${TERM_G_ROW})"
+    style_formula_cell(cell, FMT_CURRENCY)
+    TV_FCFE_ROW = r
+
+    # Row 47: Total CF
+    r = 47
+    write_label(ws, r, 1, "Total Cash Flow")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        if ci < 10:
+            cell.value = f"={c}{FCFE_ROW}"
+        else:
+            cell.value = f"={c}{FCFE_ROW}+{c}{TV_FCFE_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    TOTAL_CF_FCFE_ROW = r
+
+    # Row 48: Discount Factor (at Re)
+    r = 48
+    write_label(ws, r, 1, "Discount Factor")
+    for i, ci in enumerate(FCST_COLS):
+        n = i + 1
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=1/(1+$B${RE_ROW})^{n}"
+        style_formula_cell(cell, '0.0000')
+    DF_FCFE_ROW = r
+
+    # Row 49: PV of CF
+    r = 49
+    write_label(ws, r, 1, "PV of Cash Flow")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{TOTAL_CF_FCFE_ROW}*{c}{DF_FCFE_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    PV_CF_FCFE_ROW = r
+
+    r = 50  # blank
+
+    # Row 51: Sum of PV
+    r = 51
+    write_label(ws, r, 1, "Equity Value (Sum of PV)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=SUM(E{PV_CF_FCFE_ROW}:J{PV_CF_FCFE_ROW})"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    EQ_VAL_FCFE_ROW = r
+
+    # Row 52: / Shares
+    r = 52
+    write_label(ws, r, 1, "/ Shares Outstanding")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{SHARES_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+
+    # Row 53: Implied Price (DCF FCFE)
+    r = 53
+    write_label(ws, r, 1, "Implied Price (DCF FCFE)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF(B52<>0,B{EQ_VAL_FCFE_ROW}/B52*1000,0)"
+    style_formula_cell(cell, '#,##0.00')
+    cell.font = BLACK_BOLD
+    style_double_line_row(ws, r, MAX_COL)
+    PRICE_DCF_FCFE_ROW = r
+
+    r = 54  # blank
+
+    # =========================================================================
+    # Section 4: PV OF ABNORMAL NOPAT (PVAOI) (rows 56-76)
+    # =========================================================================
+    r = 56
+    style_section_header(ws, r, MAX_COL, "PV OF ABNORMAL OPERATING INCOME (PVAOI)")
+
+    r = 57  # blank
+
+    # Row 58: Year headers
+    r = 58
+    for i, yr in enumerate(FCST_YEAR_LABELS):
+        cell = ws.cell(row=r, column=FCST_COLS[i], value=yr)
+        cell.font = BLACK_BOLD
+        cell.number_format = FMT_YEAR
+        cell.alignment = Alignment(horizontal="center")
+        cell.fill = HEADER_FILL
+        cell.border = THIN_BORDER
+
+    # Row 59: NOPAT (from Forecast row 30)
+    r = 59
+    write_label(ws, r, 1, "NOPAT")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={FCAST}!{c}30"
+        style_crossref_cell(cell, FMT_CURRENCY)
+    PVAOI_NOPAT_ROW = r
+
+    # Row 60: Beginning BV of NOA (prior year NOA from Forecast row 40)
+    r = 60
+    write_label(ws, r, 1, "Beg BV of NOA")
+    # 2025E uses 2024 (Forecast col D=row 40), 2026E uses E40, etc.
+    for i, ci in enumerate(FCST_COLS):
+        prev_c = cl(ci - 1)  # D for 2025E, E for 2026E, ...
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={FCAST}!{prev_c}40"
+        style_crossref_cell(cell, FMT_CURRENCY)
+    BEG_NOA_ROW = r
+
+    # Row 61: Normal Earnings = WACC * Beg NOA
+    r = 61
+    write_label(ws, r, 1, "Normal Earnings (WACC x Beg NOA)")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=$B${WACC_ROW}*{c}{BEG_NOA_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    NORMAL_NOPAT_ROW = r
+
+    # Row 62: Abnormal NOPAT
+    r = 62
+    write_label(ws, r, 1, "Abnormal NOPAT")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{PVAOI_NOPAT_ROW}-{c}{NORMAL_NOPAT_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    ABN_NOPAT_ROW = r
+
+    # Row 63: Terminal Value (last col only)
+    r = 63
+    write_label(ws, r, 1, "Terminal Value")
+    cell = ws.cell(row=r, column=10)
+    cell.value = f"=J{ABN_NOPAT_ROW}*(1+$B${TERM_G_ROW})/($B${WACC_ROW}-$B${TERM_G_ROW})"
+    style_formula_cell(cell, FMT_CURRENCY)
+    TV_PVAOI_ROW = r
+
+    # Row 64: PV Factor
+    r = 64
+    write_label(ws, r, 1, "Discount Factor")
+    for i, ci in enumerate(FCST_COLS):
+        n = i + 1
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=1/(1+$B${WACC_ROW})^{n}"
+        style_formula_cell(cell, '0.0000')
+    DF_PVAOI_ROW = r
+
+    # Row 65: PV of Abnormal NOPAT
+    r = 65
+    write_label(ws, r, 1, "PV of Abnormal NOPAT")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        if ci < 10:
+            cell.value = f"={c}{ABN_NOPAT_ROW}*{c}{DF_PVAOI_ROW}"
+        else:
+            # Last year: include terminal value
+            cell.value = f"=({c}{ABN_NOPAT_ROW}+{c}{TV_PVAOI_ROW})*{c}{DF_PVAOI_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    PV_ABN_NOPAT_ROW = r
+
+    r = 66  # blank
+
+    # Row 67: Sum PV Abnormal
+    r = 67
+    write_label(ws, r, 1, "Sum PV of Abnormal NOPAT", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=SUM(E{PV_ABN_NOPAT_ROW}:J{PV_ABN_NOPAT_ROW})"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    SUM_PV_ABN_NOPAT_ROW = r
+
+    # Row 68: + Beg BV of NOA (2024)
+    r = 68
+    write_label(ws, r, 1, "+ Beg BV of NOA (2024)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"={FCAST}!D40"
+    style_crossref_cell(cell, FMT_CURRENCY)
+    BEG_NOA_2024_ROW = r
+
+    # Row 69: = Enterprise Value
+    r = 69
+    write_label(ws, r, 1, "= Enterprise Value", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{SUM_PV_ABN_NOPAT_ROW}+B{BEG_NOA_2024_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    EV_PVAOI_ROW = r
+
+    # Row 70: - Net Debt
+    r = 70
+    write_label(ws, r, 1, "- Net Debt")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{NET_DEBT_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+
+    # Row 71: = Equity Value
+    r = 71
+    write_label(ws, r, 1, "= Equity Value", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{EV_PVAOI_ROW}-B70"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    EQ_VAL_PVAOI_ROW = r
+
+    # Row 72: / Shares
+    r = 72
+    write_label(ws, r, 1, "/ Shares Outstanding")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{SHARES_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+
+    # Row 73: Implied Price (PVAOI)
+    r = 73
+    write_label(ws, r, 1, "Implied Price (PVAOI)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF(B72<>0,B{EQ_VAL_PVAOI_ROW}/B72*1000,0)"
+    style_formula_cell(cell, '#,##0.00')
+    cell.font = BLACK_BOLD
+    style_double_line_row(ws, r, MAX_COL)
+    PRICE_PVAOI_ROW = r
+
+    r = 74  # blank
+
+    # =========================================================================
+    # Section 5: PV OF ABNORMAL EARNINGS (PVAE) (rows 76-96)
+    # =========================================================================
+    r = 76
+    style_section_header(ws, r, MAX_COL, "PV OF ABNORMAL EARNINGS (PVAE)")
+
+    r = 77  # blank
+
+    # Row 78: Year headers
+    r = 78
+    for i, yr in enumerate(FCST_YEAR_LABELS):
+        cell = ws.cell(row=r, column=FCST_COLS[i], value=yr)
+        cell.font = BLACK_BOLD
+        cell.number_format = FMT_YEAR
+        cell.alignment = Alignment(horizontal="center")
+        cell.fill = HEADER_FILL
+        cell.border = THIN_BORDER
+
+    # Row 79: Net Income (from Forecast row 35)
+    r = 79
+    write_label(ws, r, 1, "Net Income")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={FCAST}!{c}35"
+        style_crossref_cell(cell, FMT_CURRENCY)
+    PVAE_NI_ROW = r
+
+    # Row 80: Beg BV of Equity (prior year equity from Forecast row 47)
+    r = 80
+    write_label(ws, r, 1, "Beg BV of Equity")
+    for i, ci in enumerate(FCST_COLS):
+        prev_c = cl(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={FCAST}!{prev_c}47"
+        style_crossref_cell(cell, FMT_CURRENCY)
+    BEG_EQ_ROW = r
+
+    # Row 81: Normal Earnings = Re * Beg Equity
+    r = 81
+    write_label(ws, r, 1, "Normal Earnings (Re x Beg Equity)")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=$B${RE_ROW}*{c}{BEG_EQ_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    NORMAL_EARN_ROW = r
+
+    # Row 82: Abnormal Earnings
+    r = 82
+    write_label(ws, r, 1, "Abnormal Earnings")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{PVAE_NI_ROW}-{c}{NORMAL_EARN_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    ABN_EARN_ROW = r
+
+    # Row 83: Terminal Value
+    r = 83
+    write_label(ws, r, 1, "Terminal Value")
+    cell = ws.cell(row=r, column=10)
+    cell.value = f"=J{ABN_EARN_ROW}*(1+$B${TERM_G_ROW})/($B${RE_ROW}-$B${TERM_G_ROW})"
+    style_formula_cell(cell, FMT_CURRENCY)
+    TV_PVAE_ROW = r
+
+    # Row 84: PV Factor (at Re)
+    r = 84
+    write_label(ws, r, 1, "Discount Factor")
+    for i, ci in enumerate(FCST_COLS):
+        n = i + 1
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=1/(1+$B${RE_ROW})^{n}"
+        style_formula_cell(cell, '0.0000')
+    DF_PVAE_ROW = r
+
+    # Row 85: PV of Abnormal Earnings
+    r = 85
+    write_label(ws, r, 1, "PV of Abnormal Earnings")
+    for ci in FCST_COLS:
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        if ci < 10:
+            cell.value = f"={c}{ABN_EARN_ROW}*{c}{DF_PVAE_ROW}"
+        else:
+            cell.value = f"=({c}{ABN_EARN_ROW}+{c}{TV_PVAE_ROW})*{c}{DF_PVAE_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    PV_ABN_EARN_ROW = r
+
+    r = 86  # blank
+
+    # Row 87: Sum PV Abnormal Earnings
+    r = 87
+    write_label(ws, r, 1, "Sum PV of Abnormal Earnings", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=SUM(E{PV_ABN_EARN_ROW}:J{PV_ABN_EARN_ROW})"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    SUM_PV_ABN_EARN_ROW = r
+
+    # Row 88: + Current BV Equity (2024)
+    r = 88
+    write_label(ws, r, 1, "+ Current BV Equity (2024)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"={ADJ}!G81"
+    style_crossref_cell(cell, FMT_CURRENCY)
+    BV_EQ_2024_ROW = r
+
+    # Row 89: = Equity Value
+    r = 89
+    write_label(ws, r, 1, "= Equity Value", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{SUM_PV_ABN_EARN_ROW}+B{BV_EQ_2024_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    EQ_VAL_PVAE_ROW = r
+
+    # Row 90: / Shares
+    r = 90
+    write_label(ws, r, 1, "/ Shares Outstanding")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{SHARES_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+
+    # Row 91: Implied Price (PVAE)
+    r = 91
+    write_label(ws, r, 1, "Implied Price (PVAE)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF(B90<>0,B{EQ_VAL_PVAE_ROW}/B90*1000,0)"
+    style_formula_cell(cell, '#,##0.00')
+    cell.font = BLACK_BOLD
+    style_double_line_row(ws, r, MAX_COL)
+    PRICE_PVAE_ROW = r
+
+    r = 92  # blank
+
+    # =========================================================================
+    # Section 6: SENSITIVITY TABLES (rows 94-135)
+    # =========================================================================
+    r = 94
+    style_section_header(ws, r, MAX_COL, "SENSITIVITY ANALYSIS")
+
+    # --- DCF FCFF Sensitivity Table ---
+    r = 96
+    write_label(ws, r, 1, "DCF (FCFF) - Implied Share Price", bold=True)
+
+    # WACC row values (7% to 12% in 0.5% steps) - 11 values
+    wacc_vals = [0.070, 0.075, 0.080, 0.085, 0.090, 0.095, 0.100, 0.105, 0.110, 0.115, 0.120]
+    # Terminal growth col values (1.0% to 4.0% in 0.5% steps) - 7 values
+    tg_vals = [0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040]
+
+    # Write corner label
+    r = 97
+    write_label(ws, r, 1, "WACC \\ Terminal Growth", bold=True)
+    cell = ws.cell(row=r, column=1)
+    cell.fill = HEADER_FILL
+    cell.border = THIN_BORDER
+
+    # Write terminal growth headers (columns B-H = cols 2-8)
+    for j, tg in enumerate(tg_vals):
+        cell = ws.cell(row=r, column=2 + j, value=tg)
+        style_assumption_cell(cell, FMT_PERCENT)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = THIN_BORDER
+
+    # Sensitivity grid rows
+    SENS1_START_ROW = 98
+    for i, wacc in enumerate(wacc_vals):
+        row = SENS1_START_ROW + i
+        # WACC label in col A
+        cell = ws.cell(row=row, column=1, value=wacc)
+        style_assumption_cell(cell, FMT_PERCENT)
+        cell.border = THIN_BORDER
+
+        for j, tg in enumerate(tg_vals):
+            # Col for this tg value
+            col = 2 + j
+            tg_cell_ref = f"{cl(col)}{97}"  # terminal growth from header row
+            wacc_cell_ref = f"$A${row}"       # WACC from row label
+
+            # Formula: sum of PV of FCFs discounted at this WACC + TV at this WACC/g - NetDebt, / Shares * 1000
+            # FCF refs: Forecast E59:J59
+            # = (FCF_2025/(1+wacc)^1 + ... + FCF_2030/(1+wacc)^6 + FCF_2030*(1+g)/(wacc-g)/(1+wacc)^6 - NetDebt) / Shares * 1000
+            parts = []
+            for k in range(6):
+                fcf_col = cl(5 + k)  # E through J
+                yr_n = k + 1
+                parts.append(f"{FCAST}!{fcf_col}59/(1+{wacc_cell_ref})^{yr_n}")
+            # Terminal value PV
+            parts.append(f"{FCAST}!J59*(1+{tg_cell_ref})/({wacc_cell_ref}-{tg_cell_ref})/(1+{wacc_cell_ref})^6")
+
+            formula = f"=({'+'.join(parts)}-$B${NET_DEBT_ROW})/$B${SHARES_ROW}*1000"
+            cell = ws.cell(row=row, column=col, value=formula)
+            style_formula_cell(cell, '#,##0.00')
+
+    SENS1_END_ROW = SENS1_START_ROW + len(wacc_vals) - 1
+
+    r = SENS1_END_ROW + 2  # blank row then next table
+
+    # --- PVAOI Sensitivity Table ---
+    r = SENS1_END_ROW + 3
+    write_label(ws, r, 1, "PVAOI - Implied Share Price", bold=True)
+    PVAOI_SENS_TITLE_ROW = r
+
+    r = PVAOI_SENS_TITLE_ROW + 1
+    write_label(ws, r, 1, "WACC \\ Terminal Growth", bold=True)
+    cell = ws.cell(row=r, column=1)
+    cell.fill = HEADER_FILL
+    cell.border = THIN_BORDER
+    PVAOI_HEADER_ROW = r
+
+    # Write terminal growth headers
+    for j, tg in enumerate(tg_vals):
+        cell = ws.cell(row=r, column=2 + j, value=tg)
+        style_assumption_cell(cell, FMT_PERCENT)
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = THIN_BORDER
+
+    # PVAOI Sensitivity grid
+    SENS2_START_ROW = PVAOI_HEADER_ROW + 1
+    for i, wacc in enumerate(wacc_vals):
+        row = SENS2_START_ROW + i
+        cell = ws.cell(row=row, column=1, value=wacc)
+        style_assumption_cell(cell, FMT_PERCENT)
+        cell.border = THIN_BORDER
+
+        for j, tg in enumerate(tg_vals):
+            col = 2 + j
+            tg_cell_ref = f"{cl(col)}{PVAOI_HEADER_ROW}"
+            wacc_cell_ref = f"$A${row}"
+
+            # PVAOI = sum of PV of abnormal NOPAT + TV + Beg NOA - NetDebt, / Shares * 1000
+            # Abnormal NOPAT = NOPAT - WACC * BegNOA for each year
+            # BegNOA: Forecast D40 for 2025, E40 for 2026, ... I40 for 2030
+            # NOPAT: Forecast E30:J30
+            parts_abn = []
+            for k in range(6):
+                nopat_col = cl(5 + k)       # E through J
+                beg_noa_col = cl(4 + k)     # D through I (prior year)
+                yr_n = k + 1
+                # PV of abnormal NOPAT for this year
+                abn_expr = f"({FCAST}!{nopat_col}30-{wacc_cell_ref}*{FCAST}!{beg_noa_col}40)"
+                parts_abn.append(f"{abn_expr}/(1+{wacc_cell_ref})^{yr_n}")
+
+            # Terminal value of abnormal NOPAT (based on last year's abnormal)
+            last_abn = f"({FCAST}!J30-{wacc_cell_ref}*{FCAST}!I40)"
+            tv_pv = f"{last_abn}*(1+{tg_cell_ref})/({wacc_cell_ref}-{tg_cell_ref})/(1+{wacc_cell_ref})^6"
+
+            # Beg NOA (2024) = Forecast D40
+            formula = f"=({'+'.join(parts_abn)}+{tv_pv}+{FCAST}!D40-$B${NET_DEBT_ROW})/$B${SHARES_ROW}*1000"
+            cell = ws.cell(row=row, column=col, value=formula)
+            style_formula_cell(cell, '#,##0.00')
+
+    SENS2_END_ROW = SENS2_START_ROW + len(wacc_vals) - 1
+
+    r = SENS2_END_ROW + 2  # blank
+
+    # =========================================================================
+    # Section 7: COMPARABLE COMPANY ANALYSIS (rows ~SENS2_END+3)
+    # =========================================================================
+    COMPS_START = SENS2_END_ROW + 3
+    r = COMPS_START
+    style_section_header(ws, r, MAX_COL, "COMPARABLE COMPANY ANALYSIS")
+
+    r = COMPS_START + 2
+    # Headers: col A = label, cols B, C, D = AIXTRON, AMAT, LRCX
+    write_label(ws, r, 1, "Peer Company", bold=True)
+    cell = ws.cell(row=r, column=1)
+    cell.fill = HEADER_FILL
+    cell.border = THIN_BORDER
+
+    peers = ["AIXTRON SE", "Applied Materials", "Lam Research"]
+    for j, peer in enumerate(peers):
+        cell = ws.cell(row=r, column=2 + j, value=peer)
+        cell.font = BLACK_BOLD
+        cell.fill = HEADER_FILL
+        cell.border = THIN_BORDER
+        cell.alignment = Alignment(horizontal="center")
+    COMPS_HDR_ROW = r
+
+    # Peer EV (EUR 000) - hardcoded blue inputs (approximate values)
+    r = COMPS_HDR_ROW + 1
+    write_label(ws, r, 1, "Enterprise Value (EUR 000)")
+    peer_evs = [3500000, 150000000, 95000000]  # ~EUR 3.5bn, 150bn, 95bn
+    for j, ev in enumerate(peer_evs):
+        cell = ws.cell(row=r, column=2 + j, value=ev)
+        style_assumption_cell(cell, FMT_CURRENCY)
+    PEER_EV_ROW = r
+
+    # Peer EBITDA
+    r = COMPS_HDR_ROW + 2
+    write_label(ws, r, 1, "EBITDA (EUR 000)")
+    peer_ebitda = [120000, 9500000, 5800000]  # approximate
+    for j, val in enumerate(peer_ebitda):
+        cell = ws.cell(row=r, column=2 + j, value=val)
+        style_assumption_cell(cell, FMT_CURRENCY)
+    PEER_EBITDA_ROW = r
+
+    # Peer EBIT
+    r = COMPS_HDR_ROW + 3
+    write_label(ws, r, 1, "EBIT (EUR 000)")
+    peer_ebit = [85000, 8200000, 4900000]  # approximate
+    for j, val in enumerate(peer_ebit):
+        cell = ws.cell(row=r, column=2 + j, value=val)
+        style_assumption_cell(cell, FMT_CURRENCY)
+    PEER_EBIT_ROW = r
+
+    # EV/EBITDA multiples
+    r = COMPS_HDR_ROW + 4
+    write_label(ws, r, 1, "EV/EBITDA")
+    for j in range(3):
+        c = cl(2 + j)
+        cell = ws.cell(row=r, column=2 + j)
+        cell.value = f"=IF({c}{PEER_EBITDA_ROW}<>0,{c}{PEER_EV_ROW}/{c}{PEER_EBITDA_ROW},0)"
+        style_formula_cell(cell, FMT_MULTIPLE)
+    PEER_EV_EBITDA_ROW = r
+
+    # EV/EBIT multiples
+    r = COMPS_HDR_ROW + 5
+    write_label(ws, r, 1, "EV/EBIT")
+    for j in range(3):
+        c = cl(2 + j)
+        cell = ws.cell(row=r, column=2 + j)
+        cell.value = f"=IF({c}{PEER_EBIT_ROW}<>0,{c}{PEER_EV_ROW}/{c}{PEER_EBIT_ROW},0)"
+        style_formula_cell(cell, FMT_MULTIPLE)
+    PEER_EV_EBIT_ROW = r
+
+    r = COMPS_HDR_ROW + 7  # blank row then medians
+
+    # Median EV/EBITDA
+    write_label(ws, r, 1, "Median EV/EBITDA", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=MEDIAN(B{PEER_EV_EBITDA_ROW}:D{PEER_EV_EBITDA_ROW})"
+    style_formula_cell(cell, FMT_MULTIPLE)
+    cell.font = BLACK_BOLD
+    MED_EV_EBITDA_ROW = r
+
+    # Median EV/EBIT
+    r = COMPS_HDR_ROW + 8
+    write_label(ws, r, 1, "Median EV/EBIT", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=MEDIAN(B{PEER_EV_EBIT_ROW}:D{PEER_EV_EBIT_ROW})"
+    style_formula_cell(cell, FMT_MULTIPLE)
+    cell.font = BLACK_BOLD
+    MED_EV_EBIT_ROW = r
+
+    r = COMPS_HDR_ROW + 10  # blank then ASM implied
+    write_label(ws, r, 1, "ASM International - Implied Valuation", bold=True)
+    ASM_IMPL_TITLE_ROW = r
+
+    # ASM EBITDA (2024) = EBIT + D&A from Adj ASM
+    r = ASM_IMPL_TITLE_ROW + 1
+    write_label(ws, r, 1, "ASM EBITDA (2024, EUR 000)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"={ADJ}!G25+{ADJ}!G14"
+    style_crossref_cell(cell, FMT_CURRENCY)
+    ASM_EBITDA_ROW = r
+
+    # ASM EBIT (2024)
+    r = ASM_IMPL_TITLE_ROW + 2
+    write_label(ws, r, 1, "ASM EBIT (2024, EUR 000)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"={ADJ}!G25"
+    style_crossref_cell(cell, FMT_CURRENCY)
+    ASM_EBIT_ROW = r
+
+    # Implied EV (EV/EBITDA)
+    r = ASM_IMPL_TITLE_ROW + 4
+    write_label(ws, r, 1, "Implied EV (EV/EBITDA)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{ASM_EBITDA_ROW}*B{MED_EV_EBITDA_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    IMP_EV_EBITDA_ROW = r
+
+    # - Net Debt
+    r = ASM_IMPL_TITLE_ROW + 5
+    write_label(ws, r, 1, "- Net Debt")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{NET_DEBT_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+
+    # = Equity Value (EV/EBITDA)
+    r = ASM_IMPL_TITLE_ROW + 6
+    write_label(ws, r, 1, "= Equity Value (EV/EBITDA)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{IMP_EV_EBITDA_ROW}-B{ASM_IMPL_TITLE_ROW + 5}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    EQ_VAL_COMPS_EBITDA_ROW = r
+
+    # Implied Price (EV/EBITDA)
+    r = ASM_IMPL_TITLE_ROW + 7
+    write_label(ws, r, 1, "Implied Price (EV/EBITDA)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF(B{SHARES_ROW}<>0,B{EQ_VAL_COMPS_EBITDA_ROW}/B{SHARES_ROW}*1000,0)"
+    style_formula_cell(cell, '#,##0.00')
+    cell.font = BLACK_BOLD
+    PRICE_COMPS_EBITDA_ROW = r
+
+    r = ASM_IMPL_TITLE_ROW + 9  # blank
+
+    # Implied EV (EV/EBIT)
+    write_label(ws, r, 1, "Implied EV (EV/EBIT)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{ASM_EBIT_ROW}*B{MED_EV_EBIT_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    IMP_EV_EBIT_ROW = r
+
+    # - Net Debt
+    r = ASM_IMPL_TITLE_ROW + 10
+    write_label(ws, r, 1, "- Net Debt")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{NET_DEBT_ROW}"
+    style_formula_cell(cell, FMT_CURRENCY)
+
+    # = Equity Value (EV/EBIT)
+    r = ASM_IMPL_TITLE_ROW + 11
+    write_label(ws, r, 1, "= Equity Value (EV/EBIT)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{IMP_EV_EBIT_ROW}-B{ASM_IMPL_TITLE_ROW + 10}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    cell.font = BLACK_BOLD
+    EQ_VAL_COMPS_EBIT_ROW = r
+
+    # Implied Price (EV/EBIT)
+    r = ASM_IMPL_TITLE_ROW + 12
+    write_label(ws, r, 1, "Implied Price (EV/EBIT)", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF(B{SHARES_ROW}<>0,B{EQ_VAL_COMPS_EBIT_ROW}/B{SHARES_ROW}*1000,0)"
+    style_formula_cell(cell, '#,##0.00')
+    cell.font = BLACK_BOLD
+    style_double_line_row(ws, r, MAX_COL)
+    PRICE_COMPS_EBIT_ROW = r
+
+    # =========================================================================
+    # Section 8: FOOTBALL FIELD SUMMARY
+    # =========================================================================
+    FF_START = ASM_IMPL_TITLE_ROW + 14
+    r = FF_START
+    style_section_header(ws, r, MAX_COL, "FOOTBALL FIELD SUMMARY")
+
+    r = FF_START + 2
+    # Headers
+    write_label(ws, r, 1, "Valuation Method", bold=True)
+    cell = ws.cell(row=r, column=1)
+    cell.fill = HEADER_FILL
+    cell.border = THIN_BORDER
+    cell = ws.cell(row=r, column=2, value="Implied Price (EUR)")
+    cell.font = BLACK_BOLD
+    cell.fill = HEADER_FILL
+    cell.border = THIN_BORDER
+    cell.alignment = Alignment(horizontal="center")
+    FF_HDR_ROW = r
+
+    # DCF (FCFF)
+    r = FF_HDR_ROW + 1
+    write_label(ws, r, 1, "DCF (FCFF)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{PRICE_DCF_FCFF_ROW}"
+    style_formula_cell(cell, '#,##0.00')
+    FF_FCFF_ROW = r
+
+    # DCF (FCFE)
+    r = FF_HDR_ROW + 2
+    write_label(ws, r, 1, "DCF (FCFE)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{PRICE_DCF_FCFE_ROW}"
+    style_formula_cell(cell, '#,##0.00')
+    FF_FCFE_ROW = r
+
+    # PVAOI
+    r = FF_HDR_ROW + 3
+    write_label(ws, r, 1, "PVAOI")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{PRICE_PVAOI_ROW}"
+    style_formula_cell(cell, '#,##0.00')
+    FF_PVAOI_ROW = r
+
+    # PVAE
+    r = FF_HDR_ROW + 4
+    write_label(ws, r, 1, "PVAE")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{PRICE_PVAE_ROW}"
+    style_formula_cell(cell, '#,##0.00')
+    FF_PVAE_ROW = r
+
+    # Comps EV/EBITDA
+    r = FF_HDR_ROW + 5
+    write_label(ws, r, 1, "Comps (EV/EBITDA)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{PRICE_COMPS_EBITDA_ROW}"
+    style_formula_cell(cell, '#,##0.00')
+    FF_COMPS_EBITDA_ROW = r
+
+    # Comps EV/EBIT
+    r = FF_HDR_ROW + 6
+    write_label(ws, r, 1, "Comps (EV/EBIT)")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{PRICE_COMPS_EBIT_ROW}"
+    style_formula_cell(cell, '#,##0.00')
+    FF_COMPS_EBIT_ROW = r
+
+    # Current Price
+    r = FF_HDR_ROW + 7
+    write_label(ws, r, 1, "Current Share Price")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{PRICE_ROW}"
+    style_formula_cell(cell, '#,##0.00')
+    FF_CURRENT_ROW = r
+
+    r = FF_HDR_ROW + 8  # blank
+    style_total_row(ws, r, 2)
+
+    # Average Implied Price (excluding current price)
+    r = FF_HDR_ROW + 9
+    write_label(ws, r, 1, "Average Implied Price", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=AVERAGE(B{FF_FCFF_ROW}:B{FF_COMPS_EBIT_ROW})"
+    style_formula_cell(cell, '#,##0.00')
+    cell.font = BLACK_BOLD
+    FF_AVG_ROW = r
+
+    # Recommendation
+    r = FF_HDR_ROW + 10
+    write_label(ws, r, 1, "Recommendation", bold=True)
+    cell = ws.cell(row=r, column=2)
+    cell.value = f'=IF(B{FF_AVG_ROW}>B{FF_CURRENT_ROW},"BUY","SELL")'
+    cell.font = Font(bold=True, color="000000", size=12)
+    cell.alignment = Alignment(horizontal="center")
+    style_double_line_row(ws, r, MAX_COL)
+
+    # --- Freeze panes at B4 ---
+    freeze_panes(ws, row=4, col=2)
+
+    return ws
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -2372,6 +3458,9 @@ def main():
 
     print("Building Forecast...")
     build_forecast_tab(wb)
+
+    print("Building Valuation...")
+    build_valuation_tab(wb)
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
