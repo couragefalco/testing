@@ -4,6 +4,7 @@
 import sys
 import os
 import datetime
+import copy as _copy
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -899,6 +900,193 @@ def build_standardized_asm(wb):
 
 
 # ---------------------------------------------------------------------------
+# Adjustments documentation tab
+# ---------------------------------------------------------------------------
+def build_adjustments_tab(wb):
+    """Build the 'Adjustments' tab documenting accounting analysis performed.
+
+    This is a text-only documentation tab -- no Excel formulas needed.
+    """
+    ws = wb.create_sheet(title="Adjustments")
+
+    # Column widths
+    set_column_widths(ws, widths={1: 5, 2: 30, 3: 80})
+
+    # Row 1: Title
+    r = 1
+    cell = ws.cell(row=r, column=1, value="Accounting Analysis & Adjustments - ASM International NV")
+    cell.font = Font(size=14, bold=True, color="000000")
+
+    # Row 3: Section header
+    r = 3
+    cell = ws.cell(row=r, column=1, value="Areas Examined")
+    cell.font = Font(size=12, bold=True, color="000000")
+
+    # ----- Areas data -----
+    areas = [
+        {
+            "name": "1. R&D Capitalization Policy",
+            "description": "ASM capitalizes development expenditure (significant amounts).",
+            "finding": "Compare with peers: all semi equipment companies capitalize similarly.",
+            "decision": "No Adjustment",
+            "justification": "Consistent with industry practice and peers.",
+        },
+        {
+            "name": "2. Equity Method Investment (ASMPT)",
+            "description": "~25% stake in ASM Pacific Technology.",
+            "finding": "Already separated as Investment Income in standardized IS.",
+            "decision": "No Adjustment",
+            "justification": "No further adjustment needed.",
+        },
+        {
+            "name": "3. FX Gains/Losses",
+            "description": "Highly volatile: ranged from -23M (2020) to +45M (2024).",
+            "finding": "Already classified below EBIT in standardized IS (non-operating).",
+            "decision": "No Adjustment",
+            "justification": "Already handled in standardization.",
+        },
+        {
+            "name": "4. Stock-Based Compensation",
+            "description": "EUR 42M in 2024, growing over time.",
+            "finding": "Already included in operating expenses in CapIQ data.",
+            "decision": "No Adjustment",
+            "justification": "No adjustment needed.",
+        },
+        {
+            "name": "5. Goodwill (LPE Acquisition 2022)",
+            "description": "EUR 321M from LPE acquisition.",
+            "finding": "No impairment charges taken.",
+            "decision": "No Adjustment",
+            "justification": "Monitor for future impairment risk.",
+        },
+        {
+            "name": "6. Asset Writedowns & Unusual Items",
+            "description": "Small and sporadic.",
+            "finding": "Already classified as non-recurring in standardized IS.",
+            "decision": "No Adjustment",
+            "justification": "No adjustment needed.",
+        },
+    ]
+
+    r = 5  # start writing areas
+    for area in areas:
+        # Area name (bold)
+        cell = ws.cell(row=r, column=1, value=area["name"])
+        cell.font = BLACK_BOLD
+
+        r += 1
+        ws.cell(row=r, column=2, value="Description:").font = BLACK_BOLD
+        ws.cell(row=r, column=3, value=area["description"]).font = BLACK_FONT
+
+        r += 1
+        ws.cell(row=r, column=2, value="Finding:").font = BLACK_BOLD
+        ws.cell(row=r, column=3, value=area["finding"]).font = BLACK_FONT
+
+        r += 1
+        ws.cell(row=r, column=2, value="Decision:").font = BLACK_BOLD
+        ws.cell(row=r, column=3, value=area["decision"]).font = BLACK_FONT
+
+        r += 1
+        ws.cell(row=r, column=2, value="Justification:").font = BLACK_BOLD
+        ws.cell(row=r, column=3, value=area["justification"]).font = BLACK_FONT
+
+        r += 2  # blank row between areas
+
+    # Summary
+    r += 1
+    cell = ws.cell(row=r, column=1, value="Summary")
+    cell.font = Font(size=12, bold=True, color="000000")
+    r += 1
+    ws.cell(
+        row=r,
+        column=1,
+        value="No material adjustments required. The standardization process already handles "
+              "all analytical reclassifications. Adjusted tabs pass through from Standardized tabs.",
+    ).font = BLACK_FONT
+
+    return ws
+
+
+# ---------------------------------------------------------------------------
+# Adjusted statement tabs (pass-through from Standardized)
+# ---------------------------------------------------------------------------
+def build_adjusted_tab(wb, company_key, std_sheet_name, output_sheet_name):
+    """Build an Adjusted tab that mirrors a Standardized tab via cross-sheet refs.
+
+    Since no material adjustments are being made, every data cell is a simple
+    cross-sheet reference to the corresponding Standardized tab cell.
+
+    Parameters
+    ----------
+    wb : openpyxl.Workbook
+    company_key : str
+        Key into COMPANY_INFO (e.g. 'ASM').
+    std_sheet_name : str
+        Name of the source Standardized sheet (e.g. 'Std ASM').
+    output_sheet_name : str
+        Name for the new Adjusted sheet (e.g. 'Adj ASM').
+    """
+    src_ws = wb[std_sheet_name]
+    ws = wb.create_sheet(title=output_sheet_name)
+
+    MAX_COL = 7  # columns A-G
+
+    # Column widths
+    widths = {1: 45}
+    for c in range(2, 8):
+        widths[c] = 14
+    set_column_widths(ws, widths=widths)
+
+    # Iterate through every row/col in the Standardized sheet and mirror
+    max_row = src_ws.max_row or 1
+
+    for row_idx in range(1, max_row + 1):
+        for col_idx in range(1, MAX_COL + 1):
+            src_cell = src_ws.cell(row=row_idx, column=col_idx)
+            tgt_cell = ws.cell(row=row_idx, column=col_idx)
+
+            if src_cell.value is None:
+                # Preserve formatting for section header fills, borders, etc.
+                if src_cell.fill and src_cell.fill.fill_type == "solid":
+                    tgt_cell.fill = _copy.copy(src_cell.fill)
+                if src_cell.border:
+                    tgt_cell.border = _copy.copy(src_cell.border)
+                continue
+
+            if col_idx == 1:
+                # Column A: copy label text with same font/formatting
+                tgt_cell.value = src_cell.value
+                if src_cell.font:
+                    tgt_cell.font = _copy.copy(src_cell.font)
+                if src_cell.alignment:
+                    tgt_cell.alignment = _copy.copy(src_cell.alignment)
+            else:
+                # Data columns (B-G): write cross-sheet reference
+                cl = get_column_letter(col_idx)
+                tgt_cell.value = f"='{std_sheet_name}'!{cl}{row_idx}"
+                style_crossref_cell(tgt_cell, FMT_CURRENCY)
+
+                # Preserve special number formats from source
+                if src_cell.number_format and src_cell.number_format != 'General':
+                    tgt_cell.number_format = src_cell.number_format
+
+                # Preserve bold from source (for total rows)
+                if src_cell.font and src_cell.font.bold:
+                    tgt_cell.font = Font(color="008000", bold=True)
+
+            # Preserve fills (section headers, etc.) and borders
+            if src_cell.fill and src_cell.fill.fill_type == "solid":
+                tgt_cell.fill = _copy.copy(src_cell.fill)
+            if src_cell.border and src_cell.border != Border():
+                tgt_cell.border = _copy.copy(src_cell.border)
+
+    # Freeze panes at B5 (same as standardized)
+    freeze_panes(ws, row=5, col=2)
+
+    return ws
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -925,6 +1113,21 @@ def main():
 
     print("Building Std LRCX...")
     build_standardized_tab(wb, 'LRCX', "'Input LRCX'", None, 'Std LRCX')
+
+    print("Building Adjustments tab...")
+    build_adjustments_tab(wb)
+
+    print("Building Adj ASM...")
+    build_adjusted_tab(wb, 'ASM', 'Std ASM', 'Adj ASM')
+
+    print("Building Adj AIXTRON...")
+    build_adjusted_tab(wb, 'AIXA', 'Std AIXTRON', 'Adj AIXTRON')
+
+    print("Building Adj AMAT...")
+    build_adjusted_tab(wb, 'AMAT', 'Std AMAT', 'Adj AMAT')
+
+    print("Building Adj LRCX...")
+    build_adjusted_tab(wb, 'LRCX', 'Std LRCX', 'Adj LRCX')
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
