@@ -228,8 +228,22 @@ def build_input_tabs(wb, source_wb):
 # ---------------------------------------------------------------------------
 # Standardized ASM tab
 # ---------------------------------------------------------------------------
-def build_standardized_asm(wb):
-    """Build the 'Std ASM' sheet with reformulated IS, BS, and CF.
+def build_standardized_tab(wb, company_key, input_sheet_name, reported_sheet_name, output_sheet_name):
+    """Build a standardized financial statements tab with reformulated IS, BS, and CF.
+
+    Parameters
+    ----------
+    wb : openpyxl.Workbook
+        The output workbook.
+    company_key : str
+        Key into COMPANY_INFO (e.g. 'ASM', 'AIXA', 'AMAT', 'LRCX').
+    input_sheet_name : str
+        Quoted sheet name for formula references (e.g. "'Input ASM'").
+    reported_sheet_name : str or None
+        Quoted sheet name for as-reported data (e.g. "'Input ASM (Reported)'").
+        None for peer companies that have no reported sheet.
+    output_sheet_name : str
+        Name for the output tab (e.g. 'Std ASM', 'Std AIXTRON').
 
     The reformulated balance sheet separates operating, investment, and
     financing items.  The accounting identity used is:
@@ -239,18 +253,16 @@ def build_standardized_asm(wb):
 
     All data cells are Excel formulas referencing the Input tabs.
     """
-    ws = wb.create_sheet(title="Std ASM")
+    ws = wb.create_sheet(title=output_sheet_name)
     MAX_COL = 7  # columns A-G
 
     # Shortcuts to data maps
-    is_map = COMPANY_INFO['ASM']['is_map']
-    cf_map = COMPANY_INFO['ASM']['cf_map']
-    bs_map = COMPANY_INFO['ASM']['bs_map']
-    rep_bs = COMPANY_INFO['ASM_REPORTED']['bs_map']
-    rep_cf = COMPANY_INFO['ASM_REPORTED']['cf_map']
+    info = COMPANY_INFO[company_key]
+    is_map = info['is_map']
+    cf_map = info['cf_map']
+    bs_map = info['bs_map']
 
-    input_asm = "'Input ASM'"
-    input_rep = "'Input ASM (Reported)'"
+    input_sheet = input_sheet_name
 
     # --- Column widths ---
     widths = {1: 45}
@@ -270,6 +282,19 @@ def build_standardized_asm(wb):
                 cell.value = f"={sheet}!{cl}{src_row}"
             style_crossref_cell(cell, fmt)
 
+    def write_zero_row(row, fmt=FMT_CURRENCY):
+        """Write 0 across cols B-G for missing map keys."""
+        for ci in range(2, 8):
+            cell = ws.cell(row=row, column=ci, value=0)
+            style_formula_cell(cell, fmt)
+
+    def write_crossref_or_zero(row, sheet, map_dict, key, fmt=FMT_CURRENCY, guard=True):
+        """Write crossref if key exists in map, else write 0."""
+        if key in map_dict:
+            write_crossref_row(row, sheet, map_dict[key], fmt=fmt, guard=guard)
+        else:
+            write_zero_row(row, fmt=fmt)
+
     def write_formula_row(row, formulas_by_col, fmt=FMT_CURRENCY, bold=False):
         """Write formula strings across cols B-G. formulas_by_col is a callable(col_letter)->str."""
         for ci in range(2, 8):
@@ -284,7 +309,7 @@ def build_standardized_asm(wb):
     # Row 1-4: Title, subtitle, year headers
     # =========================================================================
     r = 1
-    cell = ws.cell(row=r, column=1, value="Standardized Financial Statements - ASM International NV")
+    cell = ws.cell(row=r, column=1, value=f"Standardized Financial Statements - {info['name']}")
     cell.font = Font(size=14, bold=True, color="000000")
 
     r = 2
@@ -306,7 +331,7 @@ def build_standardized_asm(wb):
 
     r = 6
     write_label(ws, r, 1, "Tax rate (effective)")
-    write_crossref_row(r, input_asm, is_map['effective_tax_rate'], fmt=FMT_PERCENT, guard=True)
+    write_crossref_or_zero(r, input_sheet, is_map, 'effective_tax_rate', fmt=FMT_PERCENT, guard=True)
 
     r = 7  # blank
 
@@ -319,12 +344,12 @@ def build_standardized_asm(wb):
     # Row 9: Revenue
     r = 9
     write_label(ws, r, 1, "Revenue")
-    write_crossref_row(r, input_asm, is_map['revenue'])
+    write_crossref_row(r, input_sheet, is_map['revenue'])
 
     # Row 10: Cost of Sales
     r = 10
     write_label(ws, r, 1, "Cost of Sales")
-    write_crossref_row(r, input_asm, is_map['cogs'])
+    write_crossref_row(r, input_sheet, is_map['cogs'])
 
     # Row 11: Gross Profit = Revenue - COGS
     r = 11
@@ -334,22 +359,22 @@ def build_standardized_asm(wb):
     # Row 12: SG&A
     r = 12
     write_label(ws, r, 1, "SG&A", indent=2)
-    write_crossref_row(r, input_asm, is_map['sga'])
+    write_crossref_row(r, input_sheet, is_map['sga'])
 
     # Row 13: R&D
     r = 13
     write_label(ws, r, 1, "R&D", indent=2)
-    write_crossref_row(r, input_asm, is_map['rd'])
+    write_crossref_row(r, input_sheet, is_map['rd'])
 
     # Row 14: D&A (from CF supplemental -- memo line, already embedded in COGS)
     r = 14
     write_label(ws, r, 1, "Depreciation & Amortization", indent=2)
-    write_crossref_row(r, input_asm, cf_map['da_total'])
+    write_crossref_row(r, input_sheet, cf_map['da_total'])
 
     # Row 15: Other Operating Expense
     r = 15
     write_label(ws, r, 1, "Other Operating Expense", indent=2)
-    write_crossref_row(r, input_asm, is_map['other_operating_exp'])
+    write_crossref_or_zero(r, input_sheet, is_map, 'other_operating_exp')
 
     # Row 16: Total Operating Expense = COGS + SGA + RD + DA + Other
     r = 16
@@ -373,22 +398,39 @@ def build_standardized_asm(wb):
     # Row 20: Gain/Loss on Sale of Investments
     r = 20
     write_label(ws, r, 1, "Gain/Loss on Sale of Investments", indent=2)
-    write_crossref_row(r, input_asm, is_map['gain_loss_sale_invest'])
+    write_crossref_or_zero(r, input_sheet, is_map, 'gain_loss_sale_invest')
 
     # Row 21: Gain/Loss on Sale of Assets
     r = 21
     write_label(ws, r, 1, "Gain/Loss on Sale of Assets", indent=2)
-    write_crossref_row(r, input_asm, is_map['gain_loss_sale_assets'])
+    write_crossref_or_zero(r, input_sheet, is_map, 'gain_loss_sale_assets')
 
     # Row 22: Asset Writedown
     r = 22
     write_label(ws, r, 1, "Asset Writedown", indent=2)
-    write_crossref_row(r, input_asm, is_map['asset_writedown'])
+    write_crossref_or_zero(r, input_sheet, is_map, 'asset_writedown')
 
     # Row 23: Other Unusual Items
     r = 23
     write_label(ws, r, 1, "Other Unusual Items", indent=2)
-    write_crossref_row(r, input_asm, is_map['other_unusual'])
+    # Combine restructuring + other_unusual + merger_restruct if present
+    _unusual_parts = []
+    for _ukey in ['other_unusual', 'restructuring', 'merger_restruct', 'insurance_settlements']:
+        if _ukey in is_map:
+            _unusual_parts.append((_ukey, is_map[_ukey]))
+    if len(_unusual_parts) == 0:
+        write_zero_row(r)
+    elif len(_unusual_parts) == 1:
+        write_crossref_row(r, input_sheet, _unusual_parts[0][1])
+    else:
+        # Sum multiple unusual items
+        for ci in range(2, 8):
+            cl = get_column_letter(ci)
+            cell = ws.cell(row=r, column=ci)
+            parts = [f"IF(ISNUMBER({input_sheet}!{cl}{src_row}),{input_sheet}!{cl}{src_row},0)"
+                     for _, src_row in _unusual_parts]
+            cell.value = "=" + "+".join(parts)
+            style_crossref_cell(cell, FMT_CURRENCY)
 
     # Row 24: Total Non-recurring = SUM(20:23)
     r = 24
@@ -407,22 +449,22 @@ def build_standardized_asm(wb):
     # Row 27: Investment Income (Equity Method)
     r = 27
     write_label(ws, r, 1, "Investment Income (Equity Method)", indent=2)
-    write_crossref_row(r, input_asm, is_map['income_from_affiliates'])
+    write_crossref_or_zero(r, input_sheet, is_map, 'income_from_affiliates')
 
     # Row 28: Interest Income
     r = 28
     write_label(ws, r, 1, "Interest Income", indent=2)
-    write_crossref_row(r, input_asm, is_map['interest_income'])
+    write_crossref_row(r, input_sheet, is_map['interest_income'])
 
     # Row 29: Interest Expense
     r = 29
     write_label(ws, r, 1, "Interest Expense", indent=2)
-    write_crossref_row(r, input_asm, is_map['interest_expense'])
+    write_crossref_row(r, input_sheet, is_map['interest_expense'])
 
     # Row 30: FX Gains/(Losses)
     r = 30
     write_label(ws, r, 1, "FX Gains/(Losses)", indent=2)
-    write_crossref_row(r, input_asm, is_map['fx_gains'])
+    write_crossref_row(r, input_sheet, is_map['fx_gains'])
 
     # Row 31: Profit Before Tax = EBIT + 27 + 28 + 29 + 30
     r = 31
@@ -432,7 +474,7 @@ def build_standardized_asm(wb):
     # Row 32: Tax Expense
     r = 32
     write_label(ws, r, 1, "Tax Expense", indent=2)
-    write_crossref_row(r, input_asm, is_map['tax_expense'])
+    write_crossref_row(r, input_sheet, is_map['tax_expense'])
 
     # Row 33: Net Income = PBT - Tax
     r = 33
@@ -459,7 +501,7 @@ def build_standardized_asm(wb):
     # Row 38: Shares Outstanding (diluted)
     r = 38
     write_label(ws, r, 1, "Shares Outstanding (diluted)")
-    write_crossref_row(r, input_asm, is_map['diluted_shares'])
+    write_crossref_row(r, input_sheet, is_map['diluted_shares'])
 
     # Row 39: EPS (diluted)  -- NI in thousands, shares in actuals
     r = 39
@@ -469,7 +511,7 @@ def build_standardized_asm(wb):
     # Row 40: Dividends per Share
     r = 40
     write_label(ws, r, 1, "Dividends per Share")
-    write_crossref_row(r, input_asm, is_map['dividends_per_share'], fmt='#,##0.00;(#,##0.00);"-"')
+    write_crossref_or_zero(r, input_sheet, is_map, 'dividends_per_share', fmt='#,##0.00;(#,##0.00);"-"')
 
     # Row 41-42: blank
     r = 41
@@ -478,13 +520,7 @@ def build_standardized_asm(wb):
     # =========================================================================
     # Section 3: BALANCE SHEET (row 43 onwards)
     #
-    # Uses CapIQ standardized data for consistency.  CapIQ aggregates:
-    #   accounts_receivable = Reported AR + Contract Assets
-    #   net_ppe = Reported PPE + ROU Assets
-    #   other_intangibles + deferred_charges_lt = Reported Other Intangible Assets
-    #   other_lt_assets = Reported Other Assets + Employee Benefits + Eval Tools
-    #   lt_investments = Reported Invest in Associates + Other Investments
-    # We use Reported granularity for NCA breakdown so totals remain consistent.
+    # Uses CapIQ standardized data for consistency.
     # =========================================================================
     r = 43
     style_section_header(ws, r, MAX_COL, "BALANCE SHEET (Reformulated)")
@@ -496,17 +532,17 @@ def build_standardized_asm(wb):
     # Row 45: Trade Receivables (CapIQ: includes contract assets)
     r = 45
     write_label(ws, r, 1, "Trade Receivables", indent=2)
-    write_crossref_row(r, input_asm, bs_map['accounts_receivable'])
+    write_crossref_row(r, input_sheet, bs_map['accounts_receivable'])
 
     # Row 46: + Other Receivables (Income Tax Receivable etc.)
     r = 46
     write_label(ws, r, 1, "+ Other Receivables", indent=2)
-    write_crossref_row(r, input_asm, bs_map['other_receivables'])
+    write_crossref_or_zero(r, input_sheet, bs_map, 'other_receivables')
 
     # Row 47: + Inventories
     r = 47
     write_label(ws, r, 1, "+ Inventories", indent=2)
-    write_crossref_row(r, input_asm, bs_map['inventory'])
+    write_crossref_row(r, input_sheet, bs_map['inventory'])
 
     # Row 48: + Prepaid & Other CA
     r = 48
@@ -517,35 +553,35 @@ def build_standardized_asm(wb):
         prep_row = bs_map['prepaid_exp']
         oca_row = bs_map['other_current_assets']
         cell.value = (
-            f"=IF(ISNUMBER({input_asm}!{cl}{prep_row}),{input_asm}!{cl}{prep_row},0)"
-            f"+IF(ISNUMBER({input_asm}!{cl}{oca_row}),{input_asm}!{cl}{oca_row},0)"
+            f"=IF(ISNUMBER({input_sheet}!{cl}{prep_row}),{input_sheet}!{cl}{prep_row},0)"
+            f"+IF(ISNUMBER({input_sheet}!{cl}{oca_row}),{input_sheet}!{cl}{oca_row},0)"
         )
         style_crossref_cell(cell, FMT_CURRENCY)
 
     # Row 49: - Accounts Payable
     r = 49
     write_label(ws, r, 1, "- Accounts Payable", indent=2)
-    write_crossref_row(r, input_asm, bs_map['accounts_payable'])
+    write_crossref_row(r, input_sheet, bs_map['accounts_payable'])
 
     # Row 50: - Accrued Expenses
     r = 50
     write_label(ws, r, 1, "- Accrued Expenses", indent=2)
-    write_crossref_row(r, input_asm, bs_map['accrued_exp'])
+    write_crossref_row(r, input_sheet, bs_map['accrued_exp'])
 
     # Row 51: - Unearned Revenue / Contract Liabilities
     r = 51
     write_label(ws, r, 1, "- Unearned Revenue / Contract Liabilities", indent=2)
-    write_crossref_row(r, input_asm, bs_map['unearned_revenue_curr'])
+    write_crossref_row(r, input_sheet, bs_map['unearned_revenue_curr'])
 
     # Row 52: - Income Taxes Payable
     r = 52
     write_label(ws, r, 1, "- Income Taxes Payable", indent=2)
-    write_crossref_row(r, input_asm, bs_map['current_income_tax'])
+    write_crossref_row(r, input_sheet, bs_map['current_income_tax'])
 
     # Row 53: - Other Current Liabilities
     r = 53
     write_label(ws, r, 1, "- Other Current Liabilities", indent=2)
-    write_crossref_row(r, input_asm, bs_map['other_current_liab'])
+    write_crossref_row(r, input_sheet, bs_map['other_current_liab'])
 
     # Row 54: = Operating Working Capital
     OWC_ROW = 54
@@ -564,42 +600,55 @@ def build_standardized_asm(wb):
     # Row 57: PP&E (net) - CapIQ net_ppe (= Reported PPE + ROU)
     r = 57
     write_label(ws, r, 1, "PP&E (net, incl. ROU)", indent=2)
-    write_crossref_row(r, input_asm, bs_map['net_ppe'])
+    write_crossref_row(r, input_sheet, bs_map['net_ppe'])
 
     # Row 58: + Goodwill
     r = 58
     write_label(ws, r, 1, "+ Goodwill", indent=2)
-    write_crossref_row(r, input_asm, bs_map['goodwill'])
+    write_crossref_row(r, input_sheet, bs_map['goodwill'])
 
     # Row 59: + Other Intangible Assets
     r = 59
     write_label(ws, r, 1, "+ Other Intangible Assets", indent=2)
-    write_crossref_row(r, input_asm, bs_map['other_intangibles'])
+    write_crossref_row(r, input_sheet, bs_map['other_intangibles'])
 
     # Row 60: + Deferred Tax Assets
     r = 60
     write_label(ws, r, 1, "+ Deferred Tax Assets", indent=2)
-    write_crossref_row(r, input_asm, bs_map['deferred_tax_assets'])
+    write_crossref_or_zero(r, input_sheet, bs_map, 'deferred_tax_assets')
 
     # Row 61: + Deferred Charges & Other LT Intangibles
     r = 61
     write_label(ws, r, 1, "+ Deferred Charges & LT Intangibles", indent=2)
-    write_crossref_row(r, input_asm, bs_map['deferred_charges_lt'])
+    write_crossref_or_zero(r, input_sheet, bs_map, 'deferred_charges_lt')
 
     # Row 62: + Other Non-Current Assets
     r = 62
     write_label(ws, r, 1, "+ Other Non-Current Assets", indent=2)
-    write_crossref_row(r, input_asm, bs_map['other_lt_assets'])
+    write_crossref_or_zero(r, input_sheet, bs_map, 'other_lt_assets')
 
     # Row 63: - Deferred Tax Liabilities
     r = 63
     write_label(ws, r, 1, "- Deferred Tax Liabilities", indent=2)
-    write_crossref_row(r, input_asm, bs_map['deferred_tax_liab'])
+    write_crossref_or_zero(r, input_sheet, bs_map, 'deferred_tax_liab')
 
-    # Row 64: - Other Non-Current Liabilities
+    # Row 64: - Other Non-Current Liabilities (incl. pension if applicable)
     r = 64
     write_label(ws, r, 1, "- Other Non-Current Liabilities", indent=2)
-    write_crossref_row(r, input_asm, bs_map['other_non_current_liab'])
+    if 'pension_post_retire' in bs_map:
+        # Sum other_non_current_liab + pension_post_retire
+        for ci in range(2, 8):
+            cl = get_column_letter(ci)
+            cell = ws.cell(row=r, column=ci)
+            ncl_row = bs_map['other_non_current_liab']
+            pen_row = bs_map['pension_post_retire']
+            cell.value = (
+                f"=IF(ISNUMBER({input_sheet}!{cl}{ncl_row}),{input_sheet}!{cl}{ncl_row},0)"
+                f"+IF(ISNUMBER({input_sheet}!{cl}{pen_row}),{input_sheet}!{cl}{pen_row},0)"
+            )
+            style_crossref_cell(cell, FMT_CURRENCY)
+    else:
+        write_crossref_row(r, input_sheet, bs_map['other_non_current_liab'])
 
     # Note: Lease liabilities (non-current) are classified as financing,
     # not deducted from operating NCA.
@@ -628,10 +677,10 @@ def build_standardized_asm(wb):
     r = 69
     write_label(ws, r, 1, "Investment Assets:", bold=True)
 
-    # Row 70: Long-Term Investments (CapIQ = Reported Invest in Associates + Other Investments)
+    # Row 70: Long-Term Investments
     r = 70
     write_label(ws, r, 1, "Long-Term Investments", indent=2)
-    write_crossref_row(r, input_asm, bs_map['lt_investments'])
+    write_crossref_or_zero(r, input_sheet, bs_map, 'lt_investments')
 
     # Row 71: = Total Investment Assets (single line item here)
     INVEST_ASSETS_ROW = 71
@@ -657,27 +706,34 @@ def build_standardized_asm(wb):
     r = 75
     style_section_header(ws, r, MAX_COL, "FINANCING")
 
-    # Row 76: Lease Liabilities (current)
+    # Row 76: Debt items -- handle companies with explicit LT debt vs lease-only
     r = 76
     write_label(ws, r, 1, "Lease Liabilities (current)", indent=2)
-    write_crossref_row(r, input_asm, bs_map['current_lease_liab'])
+    write_crossref_or_zero(r, input_sheet, bs_map, 'current_lease_liab')
 
-    # Row 77: + Lease Liabilities (non-current)
+    # Row 77: + Lease Liabilities (non-current) / LT Debt
     r = 77
     write_label(ws, r, 1, "+ Lease Liabilities (non-current)", indent=2)
-    write_crossref_row(r, input_asm, bs_map['lt_leases'])
+    write_crossref_or_zero(r, input_sheet, bs_map, 'lt_leases')
 
     # Row 78: = Total Debt
     TOTAL_DEBT_ROW = 78
     r = TOTAL_DEBT_ROW
     write_label(ws, r, 1, "= Total Debt", bold=True)
-    write_formula_row(r, lambda cl: f"={cl}76+{cl}77", bold=True)
+    # For companies with explicit debt (lt_debt, current_lt_debt, st_borrowings),
+    # use the CapIQ total_debt figure; for ASM/AIXA (lease-only), sum row 76+77.
+    if 'total_debt' in bs_map and ('lt_debt' in bs_map or 'st_borrowings' in bs_map):
+        # Company has financial debt beyond leases -- use CapIQ total_debt
+        write_crossref_row(r, input_sheet, bs_map['total_debt'])
+    else:
+        # Lease-only debt (ASM, AIXA) -- sum current + non-current leases
+        write_formula_row(r, lambda cl: f"={cl}76+{cl}77", bold=True)
     style_total_row(ws, r, MAX_COL)
 
     # Row 79: Cash & Equivalents
     r = 79
     write_label(ws, r, 1, "Cash & Equivalents", indent=2)
-    write_crossref_row(r, input_asm, bs_map['cash'])
+    write_crossref_row(r, input_sheet, bs_map['cash_st_investments'])
 
     # Row 80: = Net Debt = Debt - Cash
     NET_DEBT_ROW = 80
@@ -689,7 +745,7 @@ def build_standardized_asm(wb):
     EQUITY_ROW = 81
     r = EQUITY_ROW
     write_label(ws, r, 1, "Group Equity")
-    write_crossref_row(r, input_asm, bs_map['total_equity'])
+    write_crossref_row(r, input_sheet, bs_map['total_equity'])
 
     # Row 82: = Invested Capital = Net Debt + Equity
     # (Business Assets = NOA + Investment = Net Debt + Equity)
@@ -725,7 +781,7 @@ def build_standardized_asm(wb):
     DA_CF_ROW = 88
     r = DA_CF_ROW
     write_label(ws, r, 1, "+ D&A")
-    write_crossref_row(r, input_asm, cf_map['da_total'])
+    write_crossref_row(r, input_sheet, cf_map['da_total'])
 
     # Row 89: - Change in OWC (OWC(t) - OWC(t-1)), 2019 = 0
     CHG_OWC_ROW = 89
@@ -750,19 +806,22 @@ def build_standardized_asm(wb):
         cl = get_column_letter(ci)
         cell = ws.cell(row=r, column=ci)
         src_row = cf_map['capex']
-        cell.value = f"=ABS(IF(ISNUMBER({input_asm}!{cl}{src_row}),{input_asm}!{cl}{src_row},0))"
+        cell.value = f"=ABS(IF(ISNUMBER({input_sheet}!{cl}{src_row}),{input_sheet}!{cl}{src_row},0))"
         style_crossref_cell(cell, FMT_CURRENCY)
 
     # Row 91: - Purchase of Intangibles (absolute value)
     PURCH_INTANG_ROW = 91
     r = PURCH_INTANG_ROW
     write_label(ws, r, 1, "- Purchase of Intangibles")
-    for ci in range(2, 8):
-        cl = get_column_letter(ci)
-        cell = ws.cell(row=r, column=ci)
-        src_row = cf_map['purchase_intangibles']
-        cell.value = f"=ABS(IF(ISNUMBER({input_asm}!{cl}{src_row}),{input_asm}!{cl}{src_row},0))"
-        style_crossref_cell(cell, FMT_CURRENCY)
+    if 'purchase_intangibles' in cf_map:
+        for ci in range(2, 8):
+            cl = get_column_letter(ci)
+            cell = ws.cell(row=r, column=ci)
+            src_row = cf_map['purchase_intangibles']
+            cell.value = f"=ABS(IF(ISNUMBER({input_sheet}!{cl}{src_row}),{input_sheet}!{cl}{src_row},0))"
+            style_crossref_cell(cell, FMT_CURRENCY)
+    else:
+        write_zero_row(r)
 
     # Row 92: = Operating CF after investment
     OP_CF_ROW = 92
@@ -834,6 +893,11 @@ def build_standardized_asm(wb):
     return ws
 
 
+def build_standardized_asm(wb):
+    """Build the 'Std ASM' sheet -- delegates to generic function."""
+    return build_standardized_tab(wb, 'ASM', "'Input ASM'", "'Input ASM (Reported)'", 'Std ASM')
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -852,6 +916,15 @@ def main():
 
     print("Building Std ASM...")
     build_standardized_asm(wb)
+
+    print("Building Std AIXTRON...")
+    build_standardized_tab(wb, 'AIXA', "'Input AIXTRON'", None, 'Std AIXTRON')
+
+    print("Building Std AMAT...")
+    build_standardized_tab(wb, 'AMAT', "'Input AMAT'", None, 'Std AMAT')
+
+    print("Building Std LRCX...")
+    build_standardized_tab(wb, 'LRCX', "'Input LRCX'", None, 'Std LRCX')
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
