@@ -19,6 +19,8 @@ from scripts.formatting import (
     FMT_CURRENCY,
     FMT_PERCENT,
     FMT_YEAR,
+    FMT_RATIO,
+    FMT_MULTIPLE,
     style_input_cell,
     style_formula_cell,
     style_crossref_cell,
@@ -1087,6 +1089,505 @@ def build_adjusted_tab(wb, company_key, std_sheet_name, output_sheet_name):
 
 
 # ---------------------------------------------------------------------------
+# Ratio Definitions tab (reference / documentation)
+# ---------------------------------------------------------------------------
+def build_ratio_definitions(wb):
+    """Build the 'Ratio Definitions' tab -- a text-only reference of ratio formulas."""
+    ws = wb.create_sheet(title="Ratio Definitions")
+
+    # Column widths
+    set_column_widths(ws, widths={1: 5, 2: 40, 3: 70})
+
+    # Title
+    cell = ws.cell(row=1, column=1, value="Ratio Definitions & Formulas")
+    cell.font = Font(size=14, bold=True, color="000000")
+
+    sections = [
+        ("Profitability", [
+            ("ROE", "Net Income / Average Total Equity"),
+            ("DuPont Decomposition", "ROS x Asset Turnover x Financial Leverage"),
+            ("RNOA", "NOPAT Margin x NOA Turnover"),
+            ("Gross Profit Margin", "Gross Profit / Revenue"),
+            ("EBIT Margin", "EBIT / Revenue"),
+            ("NOPAT Margin", "NOPAT / Revenue"),
+        ]),
+        ("Asset Management", [
+            ("Receivables Turnover", "Revenue / Avg Trade Receivables"),
+            ("Days Receivable", "365 / Receivables Turnover"),
+            ("Inventory Turnover", "COGS / Avg Inventory"),
+            ("Days Inventory", "365 / Inventory Turnover"),
+            ("Payables Turnover", "COGS / Avg Trade Payables"),
+            ("Days Payable", "365 / Payables Turnover"),
+            ("Cash Conversion Cycle", "Days Inventory + Days Receivable - Days Payable"),
+        ]),
+        ("Liquidity", [
+            ("OWC / Revenue", "Operating Working Capital / Revenue"),
+            ("Cash / Total Debt", "Cash & Equivalents / Total Debt"),
+        ]),
+        ("Solvency", [
+            ("Debt-to-Equity", "Total Debt / Total Equity"),
+            ("Interest Coverage", "EBIT / |Interest Expense|"),
+        ]),
+        ("Growth", [
+            ("Revenue Growth", "(Revenue_t / Revenue_{t-1}) - 1"),
+            ("Sustainable Growth", "(1 - Payout Ratio) x ROE"),
+        ]),
+    ]
+
+    r = 3
+    for section_name, ratios in sections:
+        # Section header
+        cell = ws.cell(row=r, column=1, value=section_name)
+        cell.font = Font(size=12, bold=True, color="000000")
+        cell.border = Border(bottom=Side(style="medium"))
+        ws.cell(row=r, column=2).border = Border(bottom=Side(style="medium"))
+        ws.cell(row=r, column=3).border = Border(bottom=Side(style="medium"))
+        r += 1
+
+        for name, formula in ratios:
+            ws.cell(row=r, column=2, value=name).font = BLACK_BOLD
+            ws.cell(row=r, column=3, value=formula).font = BLACK_FONT
+            r += 1
+
+        r += 1  # blank row between sections
+
+    return ws
+
+
+# ---------------------------------------------------------------------------
+# Ratio Analysis tab (per company)
+# ---------------------------------------------------------------------------
+def build_ratio_tab(wb, adj_sheet_name, output_sheet_name):
+    """Build a ratio analysis tab with Excel formulas referencing an Adjusted tab.
+
+    Parameters
+    ----------
+    wb : openpyxl.Workbook
+    adj_sheet_name : str
+        Name of the Adjusted sheet (e.g. 'Adj ASM').
+    output_sheet_name : str
+        Name for the output ratio sheet (e.g. 'Ratios ASM').
+    """
+    ws = wb.create_sheet(title=output_sheet_name)
+    MAX_COL = 7  # A-G
+
+    adj = f"'{adj_sheet_name}'"
+
+    # Column widths
+    widths = {1: 40}
+    for c in range(2, 8):
+        widths[c] = 14
+    set_column_widths(ws, widths=widths)
+
+    # --- Title ---
+    ws.cell(row=1, column=1,
+            value=f"Ratio Analysis - {adj_sheet_name.replace('Adj ', '')}").font = Font(
+        size=14, bold=True, color="000000")
+    ws.cell(row=2, column=1, value="(derived from Adjusted statements)").font = Font(
+        size=10, italic=True, color="666666")
+
+    # Year headers in row 3
+    write_year_headers(ws, 3, 2, YEARS)
+
+    # --- Helpers ---
+    def _label(row, text, bold=False, indent=0):
+        write_label(ws, row, 1, text, bold=bold, indent=indent)
+
+    def _formula(row, col_idx, formula_str, fmt=FMT_PERCENT):
+        cell = ws.cell(row=row, column=col_idx)
+        cell.value = formula_str
+        style_formula_cell(cell, fmt)
+
+    def _na(row, col_idx, fmt=FMT_PERCENT):
+        """Write N/A for the first year where averages are not computable."""
+        cell = ws.cell(row=row, column=col_idx, value="N/A")
+        cell.font = Font(color="999999", italic=True)
+        if fmt:
+            cell.number_format = fmt
+
+    def _cols():
+        """Return list of (col_index, col_letter, prev_col_letter_or_None)."""
+        result = []
+        for ci in range(2, 8):
+            cl = get_column_letter(ci)
+            prev_cl = get_column_letter(ci - 1) if ci > 2 else None
+            result.append((ci, cl, prev_cl))
+        return result
+
+    # =========================================================================
+    # Section: PROFITABILITY
+    # =========================================================================
+    r = 5
+    style_section_header(ws, r, MAX_COL, "PROFITABILITY")
+
+    # --- ROE ---
+    r = 6
+    _label(r, "ROE", bold=True)
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci)
+        else:
+            _formula(r, ci,
+                     f"=IF(AVERAGE({adj}!{prev_cl}81,{adj}!{cl}81)=0,0,"
+                     f"{adj}!{cl}33/AVERAGE({adj}!{prev_cl}81,{adj}!{cl}81))")
+
+    # --- DuPont: Net Profit Margin (ROS) ---
+    r = 7
+    _label(r, "  Net Profit Margin (ROS)", indent=2)
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}33/{adj}!{cl}9)")
+
+    # --- DuPont: Asset Turnover ---
+    r = 8
+    _label(r, "  x Asset Turnover", indent=2)
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci,
+                     f"=IF(AVERAGE({adj}!{prev_cl}73,{adj}!{cl}73)=0,0,"
+                     f"{adj}!{cl}9/AVERAGE({adj}!{prev_cl}73,{adj}!{cl}73))",
+                     fmt=FMT_RATIO)
+
+    # --- DuPont: ROA = ROS x Asset Turnover ---
+    r = 9
+    _label(r, "  = ROA", indent=2)
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci)
+        else:
+            _formula(r, ci, f"={cl}7*{cl}8")
+
+    # --- DuPont: Financial Leverage ---
+    r = 10
+    _label(r, "  x Financial Leverage", indent=2)
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci,
+                     f"=IF(AVERAGE({adj}!{prev_cl}81,{adj}!{cl}81)=0,0,"
+                     f"AVERAGE({adj}!{prev_cl}73,{adj}!{cl}73)/AVERAGE({adj}!{prev_cl}81,{adj}!{cl}81))",
+                     fmt=FMT_RATIO)
+
+    # --- DuPont: ROE check ---
+    r = 11
+    _label(r, "  = ROE check (ROA x Leverage)", indent=2)
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci)
+        else:
+            _formula(r, ci, f"={cl}9*{cl}10")
+
+    # --- RNOA ---
+    r = 13
+    _label(r, "RNOA", bold=True)
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci)
+        else:
+            _formula(r, ci,
+                     f"=IF(AVERAGE({adj}!{prev_cl}67,{adj}!{cl}67)=0,0,"
+                     f"{adj}!{cl}36/AVERAGE({adj}!{prev_cl}67,{adj}!{cl}67))")
+
+    # --- NOPAT Margin (for RNOA decomposition) ---
+    r = 14
+    _label(r, "  NOPAT Margin", indent=2)
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}36/{adj}!{cl}9)")
+
+    # --- NOA Turnover ---
+    r = 15
+    _label(r, "  x NOA Turnover", indent=2)
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci,
+                     f"=IF(AVERAGE({adj}!{prev_cl}67,{adj}!{cl}67)=0,0,"
+                     f"{adj}!{cl}9/AVERAGE({adj}!{prev_cl}67,{adj}!{cl}67))",
+                     fmt=FMT_RATIO)
+
+    # --- Gross Profit Margin ---
+    r = 17
+    _label(r, "Gross Profit Margin")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}11/{adj}!{cl}9)")
+
+    # --- EBIT Margin ---
+    r = 18
+    _label(r, "EBIT Margin")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}25/{adj}!{cl}9)")
+
+    # --- NOPAT Margin ---
+    r = 19
+    _label(r, "NOPAT Margin")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}36/{adj}!{cl}9)")
+
+    # =========================================================================
+    # Section: COMMON-SIZE INCOME STATEMENT
+    # =========================================================================
+    r = 21
+    style_section_header(ws, r, MAX_COL, "COMMON-SIZE INCOME STATEMENT")
+
+    r = 22
+    _label(r, "Revenue")
+    for ci in range(2, 8):
+        _formula(r, ci, "=1", fmt=FMT_PERCENT)
+
+    r = 23
+    _label(r, "Cost of Sales / Revenue")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}10/{adj}!{cl}9)")
+
+    r = 24
+    _label(r, "SG&A / Revenue")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}12/{adj}!{cl}9)")
+
+    r = 25
+    _label(r, "R&D / Revenue")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}13/{adj}!{cl}9)")
+
+    # =========================================================================
+    # Section: ASSET MANAGEMENT
+    # =========================================================================
+    r = 27
+    style_section_header(ws, r, MAX_COL, "ASSET MANAGEMENT")
+
+    # --- Receivables Turnover ---
+    r = 28
+    _label(r, "Receivables Turnover")
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci,
+                     f"=IF(AVERAGE({adj}!{prev_cl}45,{adj}!{cl}45)=0,0,"
+                     f"{adj}!{cl}9/AVERAGE({adj}!{prev_cl}45,{adj}!{cl}45))",
+                     fmt=FMT_RATIO)
+
+    # --- Days Receivable ---
+    r = 29
+    _label(r, "Days Receivable")
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci, f"=IF({cl}28=0,0,365/{cl}28)", fmt=FMT_RATIO)
+
+    # --- Inventory Turnover ---
+    r = 30
+    _label(r, "Inventory Turnover")
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci,
+                     f"=IF(AVERAGE({adj}!{prev_cl}47,{adj}!{cl}47)=0,0,"
+                     f"{adj}!{cl}10/AVERAGE({adj}!{prev_cl}47,{adj}!{cl}47))",
+                     fmt=FMT_RATIO)
+
+    # --- Days Inventory ---
+    r = 31
+    _label(r, "Days Inventory")
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci, f"=IF({cl}30=0,0,365/{cl}30)", fmt=FMT_RATIO)
+
+    # --- Payables Turnover ---
+    r = 32
+    _label(r, "Payables Turnover")
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci,
+                     f"=IF(AVERAGE({adj}!{prev_cl}49,{adj}!{cl}49)=0,0,"
+                     f"{adj}!{cl}10/AVERAGE({adj}!{prev_cl}49,{adj}!{cl}49))",
+                     fmt=FMT_RATIO)
+
+    # --- Days Payable ---
+    r = 33
+    _label(r, "Days Payable")
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci, f"=IF({cl}32=0,0,365/{cl}32)", fmt=FMT_RATIO)
+
+    # --- Cash Conversion Cycle ---
+    r = 34
+    _label(r, "Cash Conversion Cycle", bold=True)
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci, fmt=FMT_RATIO)
+        else:
+            _formula(r, ci, f"={cl}31+{cl}29-{cl}33", fmt=FMT_RATIO)
+
+    # --- OWC / Revenue ---
+    r = 36
+    _label(r, "OWC / Revenue")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}54/{adj}!{cl}9)")
+
+    # --- PP&E / Revenue ---
+    r = 37
+    _label(r, "PP&E / Revenue")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}9=0,0,{adj}!{cl}57/{adj}!{cl}9)")
+
+    # =========================================================================
+    # Section: LIQUIDITY & SOLVENCY
+    # =========================================================================
+    r = 39
+    style_section_header(ws, r, MAX_COL, "LIQUIDITY & SOLVENCY")
+
+    # --- Cash / Total Debt ---
+    r = 40
+    _label(r, "Cash / Total Debt")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}78=0,0,{adj}!{cl}79/{adj}!{cl}78)",
+                 fmt=FMT_RATIO)
+
+    # --- Debt-to-Equity ---
+    r = 41
+    _label(r, "Debt-to-Equity")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF({adj}!{cl}81=0,0,{adj}!{cl}78/{adj}!{cl}81)",
+                 fmt=FMT_RATIO)
+
+    # --- Interest Coverage ---
+    r = 42
+    _label(r, "Interest Coverage")
+    for ci, cl, _ in _cols():
+        _formula(r, ci,
+                 f"=IF(ABS({adj}!{cl}29)=0,0,{adj}!{cl}25/ABS({adj}!{cl}29))",
+                 fmt=FMT_RATIO)
+
+    # =========================================================================
+    # Section: GROWTH
+    # =========================================================================
+    r = 44
+    style_section_header(ws, r, MAX_COL, "GROWTH")
+
+    # --- Revenue Growth ---
+    r = 45
+    _label(r, "Revenue Growth")
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci)
+        else:
+            _formula(r, ci,
+                     f"=IF({adj}!{prev_cl}9=0,0,{adj}!{cl}9/{adj}!{prev_cl}9-1)")
+
+    # --- Sustainable Growth ---
+    r = 46
+    _label(r, "Sustainable Growth")
+    for ci, cl, prev_cl in _cols():
+        if prev_cl is None:
+            _na(r, ci)
+        else:
+            # Payout = DPS * shares / NI
+            # Sust Growth = (1 - payout) * ROE
+            # Guard: if NI=0, show 0
+            _formula(r, ci,
+                     f"=IF({adj}!{cl}33=0,0,"
+                     f"(1-{adj}!{cl}40*{adj}!{cl}38/1000/{adj}!{cl}33)*{cl}6)")
+
+    # Freeze panes at B5
+    freeze_panes(ws, row=5, col=2)
+
+    return ws
+
+
+# ---------------------------------------------------------------------------
+# Ratio Comparison tab (peer side-by-side)
+# ---------------------------------------------------------------------------
+def build_ratio_comparison(wb):
+    """Build the 'Ratio Comparison' tab pulling key ratios from all 4 ratio tabs."""
+    ws = wb.create_sheet(title="Ratio Comparison")
+    MAX_COL = 7  # A-G
+
+    # Column widths
+    widths = {1: 40}
+    for c in range(2, 8):
+        widths[c] = 14
+    set_column_widths(ws, widths=widths)
+
+    # Title
+    ws.cell(row=1, column=1,
+            value="Ratio Comparison - Peer Analysis").font = Font(
+        size=14, bold=True, color="000000")
+    ws.cell(row=2, column=1,
+            value="(key ratios side-by-side)").font = Font(
+        size=10, italic=True, color="666666")
+
+    # Year headers in row 3
+    write_year_headers(ws, 3, 2, YEARS)
+
+    # Ratio tabs and their display names
+    ratio_tabs = [
+        ("Ratios ASM", "ASM"),
+        ("Ratios AIXTRON", "AIXTRON"),
+        ("Ratios AMAT", "AMAT"),
+        ("Ratios LRCX", "LRCX"),
+    ]
+
+    # Key ratios to compare: (label, source_row, format)
+    key_ratios = [
+        ("ROE", 6, FMT_PERCENT),
+        ("RNOA", 13, FMT_PERCENT),
+        ("NOPAT Margin", 19, FMT_PERCENT),
+        ("Gross Profit Margin", 17, FMT_PERCENT),
+        ("Revenue Growth", 45, FMT_PERCENT),
+        ("OWC / Revenue", 36, FMT_PERCENT),
+        ("Days Receivable", 29, FMT_RATIO),
+        ("Debt-to-Equity", 41, FMT_RATIO),
+        ("Interest Coverage", 42, FMT_RATIO),
+    ]
+
+    r = 5
+    for ratio_label, src_row, fmt in key_ratios:
+        # Section label for this ratio
+        style_section_header(ws, r, MAX_COL, ratio_label)
+        r += 1
+
+        for tab_name, company_label in ratio_tabs:
+            write_label(ws, r, 1, f"  {company_label}", indent=2)
+            for ci in range(2, 8):
+                cl = get_column_letter(ci)
+                cell = ws.cell(row=r, column=ci)
+                cell.value = f"='{tab_name}'!{cl}{src_row}"
+                style_crossref_cell(cell, fmt)
+            r += 1
+
+        r += 1  # blank row between ratio groups
+
+    # Freeze panes at B5
+    freeze_panes(ws, row=5, col=2)
+
+    return ws
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -1128,6 +1629,24 @@ def main():
 
     print("Building Adj LRCX...")
     build_adjusted_tab(wb, 'LRCX', 'Std LRCX', 'Adj LRCX')
+
+    print("Building Ratio Definitions...")
+    build_ratio_definitions(wb)
+
+    print("Building Ratios ASM...")
+    build_ratio_tab(wb, 'Adj ASM', 'Ratios ASM')
+
+    print("Building Ratios AIXTRON...")
+    build_ratio_tab(wb, 'Adj AIXTRON', 'Ratios AIXTRON')
+
+    print("Building Ratios AMAT...")
+    build_ratio_tab(wb, 'Adj AMAT', 'Ratios AMAT')
+
+    print("Building Ratios LRCX...")
+    build_ratio_tab(wb, 'Adj LRCX', 'Ratios LRCX')
+
+    print("Building Ratio Comparison...")
+    build_ratio_comparison(wb)
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
