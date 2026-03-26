@@ -1588,6 +1588,728 @@ def build_ratio_comparison(wb):
 
 
 # ---------------------------------------------------------------------------
+# Forecast tab
+# ---------------------------------------------------------------------------
+def build_forecast_tab(wb):
+    """Build the 'Forecast' sheet with assumptions, condensed IS, BS, and FCF.
+
+    Historical columns (B-D) reference 'Adj ASM' rows E-G (2022-2024).
+    Forecast columns (E-J) use formulas referencing the assumption rows.
+    """
+    ws = wb.create_sheet(title="Forecast")
+    MAX_COL = 10  # columns A-J
+
+    # Column widths: A=45, B-J=14
+    widths = {1: 45}
+    for c in range(2, MAX_COL + 1):
+        widths[c] = 14
+    set_column_widths(ws, widths=widths)
+
+    # Adj ASM source sheet (quoted for formulas)
+    ADJ = "'Adj ASM'"
+
+    # Historical column mapping: Forecast col (2=B, 3=C, 4=D) -> Adj ASM col letter
+    HIST_COL_MAP = {2: 'E', 3: 'F', 4: 'G'}
+
+    # Adj ASM row references
+    ADJ_REV = 9
+    ADJ_COGS = 10
+    ADJ_GP = 11
+    ADJ_SGA = 12
+    ADJ_RD = 13
+    ADJ_DA = 14
+    ADJ_EBIT = 25
+    ADJ_INV_INC = 27
+    ADJ_INT_EXP = 29
+    ADJ_PBT = 31
+    ADJ_TAX = 32
+    ADJ_NI = 33
+    ADJ_ETR = 35
+    ADJ_NOPAT = 36
+    ADJ_OWC = 54
+    ADJ_NET_NCA = 65
+    ADJ_NOA = 67
+    ADJ_INVEST_ASSETS = 71
+    ADJ_BIZ_ASSETS = 73
+    ADJ_TOTAL_DEBT = 78
+    ADJ_CASH = 79
+    ADJ_NET_DEBT = 80
+    ADJ_EQUITY = 81
+    ADJ_INVESTED_CAP = 82
+    ADJ_FCF_DE = 96
+    ADJ_FCF_EQ = 99
+
+    # Year headers
+    hist_years = [2022, 2023, 2024]
+    fcast_years = ["2025E", "2026E", "2027E", "2028E", "2029E", "2030E"]
+    all_years = hist_years + fcast_years
+
+    # Helper: get column letter for data columns (col 2 = B, ... col 10 = J)
+    def cl(col_idx):
+        return get_column_letter(col_idx)
+
+    # Helper: write historical cross-ref row (cols B-D referencing Adj ASM)
+    def write_hist_ref(row, adj_row, fmt=FMT_CURRENCY):
+        for ci in range(2, 5):  # cols B, C, D
+            cell = ws.cell(row=row, column=ci)
+            adj_col = HIST_COL_MAP[ci]
+            cell.value = f"={ADJ}!{adj_col}{adj_row}"
+            style_crossref_cell(cell, fmt)
+
+    # Helper: write forecast formula across cols E-J
+    def write_fcast_formula(row, formula_fn, fmt=FMT_CURRENCY, bold=False):
+        """formula_fn(col_letter, col_idx) -> formula string"""
+        for ci in range(5, 11):  # cols E through J
+            c = cl(ci)
+            cell = ws.cell(row=row, column=ci)
+            cell.value = formula_fn(c, ci)
+            style_formula_cell(cell, fmt)
+            if bold:
+                cell.font = BLACK_BOLD
+
+    # Helper: write full-row formula (hist derived + forecast)
+    def write_hist_formula(row, formula_fn, fmt=FMT_CURRENCY, bold=False):
+        """Write formula across historical cols B-D."""
+        for ci in range(2, 5):
+            c = cl(ci)
+            cell = ws.cell(row=row, column=ci)
+            cell.value = formula_fn(c, ci)
+            style_formula_cell(cell, fmt)
+            if bold:
+                cell.font = BLACK_BOLD
+
+    # =========================================================================
+    # Row 1-3: Title, subtitle, year headers
+    # =========================================================================
+    r = 1
+    cell = ws.cell(row=r, column=1, value="ASM International NV - Financial Forecast")
+    cell.font = Font(size=14, bold=True, color="000000")
+
+    r = 2
+    ws.cell(row=r, column=1, value="(EUR 000)").font = Font(size=10, italic=True, color="666666")
+
+    r = 3
+    write_year_headers(ws, r, 2, all_years)
+    # Also style column A header
+    cell = ws.cell(row=r, column=1)
+    cell.font = BLACK_BOLD
+
+    r = 4  # blank
+
+    # =========================================================================
+    # Section 1: FORECAST ASSUMPTIONS (rows 5-17)
+    # =========================================================================
+    r = 5
+    style_section_header(ws, r, MAX_COL, "FORECAST ASSUMPTIONS")
+
+    # Row 6: Revenue Growth Rate
+    r = 6
+    write_label(ws, r, 1, "Revenue Growth Rate")
+    # Historical: calculated from Adj ASM revenue
+    for ci in range(2, 5):
+        c = cl(ci)
+        adj_col = HIST_COL_MAP[ci]
+        # Previous year col in Adj ASM
+        prev_adj_col = chr(ord(adj_col) - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({ADJ}!{prev_adj_col}{ADJ_REV}<>0,{ADJ}!{adj_col}{ADJ_REV}/{ADJ}!{prev_adj_col}{ADJ_REV}-1,0)"
+        style_formula_cell(cell, FMT_PERCENT)
+    # Forecast assumptions (blue + yellow)
+    growth_rates = [0.12, 0.10, 0.08, 0.06, 0.04, 0.03]
+    for i, rate in enumerate(growth_rates):
+        cell = ws.cell(row=r, column=5 + i, value=rate)
+        style_assumption_cell(cell, FMT_PERCENT)
+    REV_GROWTH_ROW = r
+
+    # Row 7: Gross Profit Margin
+    r = 7
+    write_label(ws, r, 1, "Gross Profit Margin")
+    # Historical: GP / Revenue from Adj ASM
+    for ci in range(2, 5):
+        adj_col = HIST_COL_MAP[ci]
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({ADJ}!{adj_col}{ADJ_REV}<>0,{ADJ}!{adj_col}{ADJ_GP}/{ADJ}!{adj_col}{ADJ_REV},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+    gp_margins = [0.505, 0.505, 0.510, 0.510, 0.510, 0.510]
+    for i, val in enumerate(gp_margins):
+        cell = ws.cell(row=r, column=5 + i, value=val)
+        style_assumption_cell(cell, FMT_PERCENT)
+    GP_MARGIN_ROW = r
+
+    # Row 8: SG&A / Revenue
+    r = 8
+    write_label(ws, r, 1, "SG&A / Revenue")
+    for ci in range(2, 5):
+        adj_col = HIST_COL_MAP[ci]
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({ADJ}!{adj_col}{ADJ_REV}<>0,{ADJ}!{adj_col}{ADJ_SGA}/{ADJ}!{adj_col}{ADJ_REV},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+    sga_pcts = [0.108, 0.105, 0.102, 0.100, 0.100, 0.100]
+    for i, val in enumerate(sga_pcts):
+        cell = ws.cell(row=r, column=5 + i, value=val)
+        style_assumption_cell(cell, FMT_PERCENT)
+    SGA_PCT_ROW = r
+
+    # Row 9: R&D / Revenue
+    r = 9
+    write_label(ws, r, 1, "R&D / Revenue")
+    for ci in range(2, 5):
+        adj_col = HIST_COL_MAP[ci]
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({ADJ}!{adj_col}{ADJ_REV}<>0,{ADJ}!{adj_col}{ADJ_RD}/{ADJ}!{adj_col}{ADJ_REV},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+    rd_pcts = [0.126, 0.125, 0.123, 0.120, 0.120, 0.120]
+    for i, val in enumerate(rd_pcts):
+        cell = ws.cell(row=r, column=5 + i, value=val)
+        style_assumption_cell(cell, FMT_PERCENT)
+    RD_PCT_ROW = r
+
+    # Row 10: D&A / Revenue
+    r = 10
+    write_label(ws, r, 1, "D&A / Revenue")
+    for ci in range(2, 5):
+        adj_col = HIST_COL_MAP[ci]
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({ADJ}!{adj_col}{ADJ_REV}<>0,{ADJ}!{adj_col}{ADJ_DA}/{ADJ}!{adj_col}{ADJ_REV},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+    da_pcts = [0.037, 0.037, 0.037, 0.035, 0.035, 0.035]
+    for i, val in enumerate(da_pcts):
+        cell = ws.cell(row=r, column=5 + i, value=val)
+        style_assumption_cell(cell, FMT_PERCENT)
+    DA_PCT_ROW = r
+
+    # Row 11: Tax Rate
+    r = 11
+    write_label(ws, r, 1, "Tax Rate")
+    for ci in range(2, 5):
+        adj_col = HIST_COL_MAP[ci]
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={ADJ}!{adj_col}{ADJ_ETR}"
+        style_formula_cell(cell, FMT_PERCENT)
+    tax_rates = [0.21, 0.21, 0.21, 0.21, 0.21, 0.21]
+    for i, val in enumerate(tax_rates):
+        cell = ws.cell(row=r, column=5 + i, value=val)
+        style_assumption_cell(cell, FMT_PERCENT)
+    TAX_RATE_ROW = r
+
+    # Row 12: OWC / Revenue
+    r = 12
+    write_label(ws, r, 1, "OWC / Revenue")
+    for ci in range(2, 5):
+        adj_col = HIST_COL_MAP[ci]
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({ADJ}!{adj_col}{ADJ_REV}<>0,{ADJ}!{adj_col}{ADJ_OWC}/{ADJ}!{adj_col}{ADJ_REV},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+    owc_pcts = [0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+    for i, val in enumerate(owc_pcts):
+        cell = ws.cell(row=r, column=5 + i, value=val)
+        style_assumption_cell(cell, FMT_PERCENT)
+    OWC_PCT_ROW = r
+
+    # Row 13: Net NCA / Revenue
+    r = 13
+    write_label(ws, r, 1, "Net NCA / Revenue")
+    for ci in range(2, 5):
+        adj_col = HIST_COL_MAP[ci]
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({ADJ}!{adj_col}{ADJ_REV}<>0,{ADJ}!{adj_col}{ADJ_NET_NCA}/{ADJ}!{adj_col}{ADJ_REV},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+    nca_pcts = [0.40, 0.40, 0.39, 0.38, 0.37, 0.36]
+    for i, val in enumerate(nca_pcts):
+        cell = ws.cell(row=r, column=5 + i, value=val)
+        style_assumption_cell(cell, FMT_PERCENT)
+    NCA_PCT_ROW = r
+
+    # Row 14: Investment Assets / Revenue
+    r = 14
+    write_label(ws, r, 1, "Investment Assets / Revenue")
+    for ci in range(2, 5):
+        adj_col = HIST_COL_MAP[ci]
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({ADJ}!{adj_col}{ADJ_REV}<>0,{ADJ}!{adj_col}{ADJ_INVEST_ASSETS}/{ADJ}!{adj_col}{ADJ_REV},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+    ia_pcts = [0.30, 0.29, 0.28, 0.27, 0.26, 0.25]
+    for i, val in enumerate(ia_pcts):
+        cell = ws.cell(row=r, column=5 + i, value=val)
+        style_assumption_cell(cell, FMT_PERCENT)
+    IA_PCT_ROW = r
+
+    # Row 15: Debt / Capital
+    r = 15
+    write_label(ws, r, 1, "Debt / Capital")
+    for ci in range(2, 5):
+        adj_col = HIST_COL_MAP[ci]
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({ADJ}!{adj_col}{ADJ_INVESTED_CAP}<>0,{ADJ}!{adj_col}{ADJ_TOTAL_DEBT}/{ADJ}!{adj_col}{ADJ_INVESTED_CAP},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+    debt_pcts = [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+    for i, val in enumerate(debt_pcts):
+        cell = ws.cell(row=r, column=5 + i, value=val)
+        style_assumption_cell(cell, FMT_PERCENT)
+    DEBT_PCT_ROW = r
+
+    # Row 16: Terminal Growth Rate (only 2030E has a value)
+    r = 16
+    write_label(ws, r, 1, "Terminal Growth Rate")
+    # Leave B-I blank, only J (2030E) gets 2.5%
+    cell = ws.cell(row=r, column=10, value=0.025)
+    style_assumption_cell(cell, FMT_PERCENT)
+    TERM_GROWTH_ROW = r
+
+    r = 17  # blank
+
+    # =========================================================================
+    # Section 2: CONDENSED INCOME STATEMENT (rows 18-37)
+    # =========================================================================
+    r = 18
+    style_section_header(ws, r, MAX_COL, "CONDENSED INCOME STATEMENT")
+
+    # Row 19: Revenue
+    r = 19
+    write_label(ws, r, 1, "Revenue", bold=True)
+    write_hist_ref(r, ADJ_REV)
+    # Forecast: Revenue = prev_col_Revenue * (1 + growth_rate)
+    write_fcast_formula(r,
+        lambda c, ci: f"={cl(ci-1)}{r}*(1+{c}{REV_GROWTH_ROW})",
+        bold=True)
+    REV_ROW = r
+
+    # Row 20: Revenue Growth
+    r = 20
+    write_label(ws, r, 1, "Revenue Growth", indent=2)
+    # Historical: reference growth rate row
+    write_hist_formula(r,
+        lambda c, ci: f"={c}{REV_GROWTH_ROW}",
+        fmt=FMT_PERCENT)
+    # Forecast: reference assumption row
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{REV_GROWTH_ROW}",
+        fmt=FMT_PERCENT)
+
+    # Row 21: blank
+    r = 21
+
+    # Row 22: Gross Profit
+    r = 22
+    write_label(ws, r, 1, "Gross Profit", bold=True)
+    write_hist_ref(r, ADJ_GP)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{REV_ROW}*{c}{GP_MARGIN_ROW}",
+        bold=True)
+    GP_ROW = r
+
+    # Row 23: Gross Margin
+    r = 23
+    write_label(ws, r, 1, "Gross Margin", indent=2)
+    write_hist_formula(r,
+        lambda c, ci: f"=IF({c}{REV_ROW}<>0,{c}{GP_ROW}/{c}{REV_ROW},0)",
+        fmt=FMT_PERCENT)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{GP_MARGIN_ROW}",
+        fmt=FMT_PERCENT)
+
+    # Row 24: SG&A
+    r = 24
+    write_label(ws, r, 1, "SG&A", indent=2)
+    write_hist_ref(r, ADJ_SGA)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{REV_ROW}*{c}{SGA_PCT_ROW}")
+    SGA_ROW = r
+
+    # Row 25: R&D
+    r = 25
+    write_label(ws, r, 1, "R&D", indent=2)
+    write_hist_ref(r, ADJ_RD)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{REV_ROW}*{c}{RD_PCT_ROW}")
+    RD_ROW = r
+
+    # Row 26: D&A
+    r = 26
+    write_label(ws, r, 1, "D&A", indent=2)
+    write_hist_ref(r, ADJ_DA)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{REV_ROW}*{c}{DA_PCT_ROW}")
+    DA_ROW = r
+
+    # Row 27: EBIT = GP - SGA - RD - DA
+    r = 27
+    write_label(ws, r, 1, "EBIT", bold=True)
+    write_hist_ref(r, ADJ_EBIT)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{GP_ROW}-{c}{SGA_ROW}-{c}{RD_ROW}-{c}{DA_ROW}",
+        bold=True)
+    style_total_row(ws, r, MAX_COL)
+    EBIT_ROW = r
+
+    # Row 28: EBIT Margin
+    r = 28
+    write_label(ws, r, 1, "EBIT Margin", indent=2)
+    # All columns: formula
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({c}{REV_ROW}<>0,{c}{EBIT_ROW}/{c}{REV_ROW},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+
+    # Row 29: Tax on EBIT
+    r = 29
+    write_label(ws, r, 1, "Tax on EBIT", indent=2)
+    write_hist_formula(r,
+        lambda c, ci: f"={c}{EBIT_ROW}*{c}{TAX_RATE_ROW}")
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{EBIT_ROW}*{c}{TAX_RATE_ROW}")
+    TAX_EBIT_ROW = r
+
+    # Row 30: NOPAT = EBIT - Tax on EBIT
+    r = 30
+    write_label(ws, r, 1, "NOPAT", bold=True)
+    write_hist_ref(r, ADJ_NOPAT)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{EBIT_ROW}-{c}{TAX_EBIT_ROW}",
+        bold=True)
+    style_total_row(ws, r, MAX_COL)
+    NOPAT_ROW = r
+
+    # Row 31: NOPAT Margin
+    r = 31
+    write_label(ws, r, 1, "NOPAT Margin", indent=2)
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({c}{REV_ROW}<>0,{c}{NOPAT_ROW}/{c}{REV_ROW},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+
+    # Row 32: blank
+    r = 32
+
+    # Row 33: Investment Income
+    r = 33
+    write_label(ws, r, 1, "Investment Income", indent=2)
+    write_hist_ref(r, ADJ_INV_INC)
+    # Forecast: hold constant at 2024 level (col D = 2024 value)
+    write_fcast_formula(r,
+        lambda c, ci: f"=D{r}")
+    INV_INC_ROW = r
+
+    # Row 34: Interest Expense
+    r = 34
+    write_label(ws, r, 1, "Interest Expense", indent=2)
+    write_hist_ref(r, ADJ_INT_EXP)
+    # Forecast: hold constant at 2024 level
+    write_fcast_formula(r,
+        lambda c, ci: f"=D{r}")
+    INT_EXP_ROW = r
+
+    # Row 35: Net Income = NOPAT + Inv Inc - Int Exp
+    r = 35
+    write_label(ws, r, 1, "Net Income", bold=True)
+    write_hist_ref(r, ADJ_NI)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{NOPAT_ROW}+{c}{INV_INC_ROW}+{c}{INT_EXP_ROW}",
+        bold=True)
+    style_double_line_row(ws, r, MAX_COL)
+    NI_ROW = r
+
+    r = 36  # blank
+
+    # =========================================================================
+    # Section 3: CONDENSED BALANCE SHEET (rows 37-50)
+    # =========================================================================
+    r = 37
+    style_section_header(ws, r, MAX_COL, "CONDENSED BALANCE SHEET")
+
+    # Row 38: OWC
+    r = 38
+    write_label(ws, r, 1, "Operating Working Capital")
+    write_hist_ref(r, ADJ_OWC)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{REV_ROW}*{c}{OWC_PCT_ROW}")
+    F_OWC_ROW = r
+
+    # Row 39: + Net NCA
+    r = 39
+    write_label(ws, r, 1, "+ Net Non-Current Operating Assets")
+    write_hist_ref(r, ADJ_NET_NCA)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{REV_ROW}*{c}{NCA_PCT_ROW}")
+    F_NCA_ROW = r
+
+    # Row 40: = NOA
+    r = 40
+    write_label(ws, r, 1, "= Net Operating Assets", bold=True)
+    write_hist_ref(r, ADJ_NOA)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{F_OWC_ROW}+{c}{F_NCA_ROW}",
+        bold=True)
+    style_total_row(ws, r, MAX_COL)
+    F_NOA_ROW = r
+
+    # Row 41: blank
+    r = 41
+
+    # Row 42: + Investment Assets
+    r = 42
+    write_label(ws, r, 1, "+ Investment Assets")
+    write_hist_ref(r, ADJ_INVEST_ASSETS)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{REV_ROW}*{c}{IA_PCT_ROW}")
+    F_IA_ROW = r
+
+    # Row 43: = Business Assets
+    r = 43
+    write_label(ws, r, 1, "= Business Assets", bold=True)
+    write_hist_ref(r, ADJ_BIZ_ASSETS)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{F_NOA_ROW}+{c}{F_IA_ROW}",
+        bold=True)
+    style_double_line_row(ws, r, MAX_COL)
+    F_BIZ_ASSETS_ROW = r
+
+    # Row 44: blank
+    r = 44
+
+    # Row 45: Invested Capital (= Business Assets, by construction)
+    r = 45
+    write_label(ws, r, 1, "= Invested Capital", bold=True)
+    write_hist_ref(r, ADJ_INVESTED_CAP)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{F_BIZ_ASSETS_ROW}",
+        bold=True)
+    F_INVESTED_CAP_ROW = r
+
+    # Row 46: Debt
+    r = 46
+    write_label(ws, r, 1, "Debt", indent=2)
+    write_hist_ref(r, ADJ_TOTAL_DEBT)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{F_INVESTED_CAP_ROW}*{c}{DEBT_PCT_ROW}")
+    F_DEBT_ROW = r
+
+    # Row 47: Group Equity = Invested Capital - Debt
+    r = 47
+    write_label(ws, r, 1, "Group Equity", indent=2)
+    write_hist_ref(r, ADJ_EQUITY)
+    write_fcast_formula(r,
+        lambda c, ci: f"={c}{F_INVESTED_CAP_ROW}-{c}{F_DEBT_ROW}")
+    F_EQUITY_ROW = r
+
+    # Row 48: BS Check (should = 0)
+    r = 48
+    write_label(ws, r, 1, "BS Check (should = 0)", bold=True)
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{F_BIZ_ASSETS_ROW}-{c}{F_INVESTED_CAP_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+        cell.font = BLACK_BOLD
+    F_BS_CHECK_ROW = r
+
+    r = 49  # blank
+
+    # =========================================================================
+    # Section 4: FREE CASH FLOW (rows 50-65)
+    # =========================================================================
+    r = 50
+    style_section_header(ws, r, MAX_COL, "FREE CASH FLOW")
+
+    # Row 51: NOPAT (ref IS section)
+    r = 51
+    write_label(ws, r, 1, "NOPAT")
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{NOPAT_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    F_CF_NOPAT_ROW = r
+
+    # Row 52: + D&A
+    r = 52
+    write_label(ws, r, 1, "+ D&A")
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{DA_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    F_CF_DA_ROW = r
+
+    # Row 53: - Change in OWC = OWC(t) - OWC(t-1)
+    r = 53
+    write_label(ws, r, 1, "- Change in OWC")
+    # Col B (2022): use Adj ASM 2021 (col D) as t-1
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{F_OWC_ROW}-{ADJ}!D{ADJ_OWC}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    # Cols C onwards: OWC(t) - OWC(t-1)
+    for ci in range(3, MAX_COL + 1):
+        c = cl(ci)
+        prev_c = cl(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{F_OWC_ROW}-{prev_c}{F_OWC_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    F_CHG_OWC_ROW = r
+
+    # Row 54: - Change in Net NCA = NCA(t) - NCA(t-1)
+    r = 54
+    write_label(ws, r, 1, "- Change in Net NCA")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{F_NCA_ROW}-{ADJ}!D{ADJ_NET_NCA}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    for ci in range(3, MAX_COL + 1):
+        c = cl(ci)
+        prev_c = cl(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{F_NCA_ROW}-{prev_c}{F_NCA_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    F_CHG_NCA_ROW = r
+
+    # Row 55: = Operating CF after investment
+    r = 55
+    write_label(ws, r, 1, "= Oper CF after investment", bold=True)
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{F_CF_NOPAT_ROW}+{c}{F_CF_DA_ROW}-{c}{F_CHG_OWC_ROW}-{c}{F_CHG_NCA_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+        cell.font = BLACK_BOLD
+    style_total_row(ws, r, MAX_COL)
+    F_OPER_CF_ROW = r
+
+    # Row 56: blank
+    r = 56
+
+    # Row 57: + Net Inv Profit after tax = Inv Income * (1 - tax)
+    r = 57
+    write_label(ws, r, 1, "+ Net Inv Profit after tax")
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{INV_INC_ROW}*(1-{c}{TAX_RATE_ROW})"
+        style_formula_cell(cell, FMT_CURRENCY)
+    F_NET_INV_PROFIT_ROW = r
+
+    # Row 58: - Change in Inv Assets = IA(t) - IA(t-1)
+    r = 58
+    write_label(ws, r, 1, "- Change in Inv Assets")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{F_IA_ROW}-{ADJ}!D{ADJ_INVEST_ASSETS}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    for ci in range(3, MAX_COL + 1):
+        c = cl(ci)
+        prev_c = cl(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{F_IA_ROW}-{prev_c}{F_IA_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    F_CHG_IA_ROW = r
+
+    # Row 59: = FCF to D&E
+    r = 59
+    write_label(ws, r, 1, "= FCF to Debt & Equity", bold=True)
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{F_OPER_CF_ROW}+{c}{F_NET_INV_PROFIT_ROW}-{c}{F_CHG_IA_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+        cell.font = BLACK_BOLD
+    style_total_row(ws, r, MAX_COL)
+    F_FCF_DE_ROW = r
+
+    # Row 60: - Interest after tax = Int Exp * (1 - tax)
+    r = 60
+    write_label(ws, r, 1, "- Interest after tax")
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{INT_EXP_ROW}*(1-{c}{TAX_RATE_ROW})"
+        style_formula_cell(cell, FMT_CURRENCY)
+    F_INT_AFTER_TAX_ROW = r
+
+    # Row 61: + Change in Debt = Debt(t) - Debt(t-1)
+    r = 61
+    write_label(ws, r, 1, "+ Change in Debt")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=B{F_DEBT_ROW}-{ADJ}!D{ADJ_TOTAL_DEBT}"
+    style_formula_cell(cell, FMT_CURRENCY)
+    for ci in range(3, MAX_COL + 1):
+        c = cl(ci)
+        prev_c = cl(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{F_DEBT_ROW}-{prev_c}{F_DEBT_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+    F_CHG_DEBT_ROW = r
+
+    # Row 62: = FCF to Equity
+    r = 62
+    write_label(ws, r, 1, "= FCF to Equity", bold=True)
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{F_FCF_DE_ROW}-{c}{F_INT_AFTER_TAX_ROW}+{c}{F_CHG_DEBT_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+        cell.font = BLACK_BOLD
+    style_double_line_row(ws, r, MAX_COL)
+    F_FCF_EQ_ROW = r
+
+    r = 63  # blank
+
+    # =========================================================================
+    # Section 5: KEY METRICS (rows 64-70)
+    # =========================================================================
+    r = 64
+    style_section_header(ws, r, MAX_COL, "KEY METRICS")
+
+    # Row 65: NOPAT Margin (repeated for convenience)
+    r = 65
+    write_label(ws, r, 1, "NOPAT Margin")
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF({c}{REV_ROW}<>0,{c}{NOPAT_ROW}/{c}{REV_ROW},0)"
+        style_formula_cell(cell, FMT_PERCENT)
+
+    # Row 66: ROE = NI / Avg Equity
+    r = 66
+    write_label(ws, r, 1, "ROE")
+    # Col B (2022): use Adj ASM 2021 equity (col D) for average
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF((B{F_EQUITY_ROW}+{ADJ}!D{ADJ_EQUITY})/2<>0,B{NI_ROW}/((B{F_EQUITY_ROW}+{ADJ}!D{ADJ_EQUITY})/2),0)"
+    style_formula_cell(cell, FMT_PERCENT)
+    for ci in range(3, MAX_COL + 1):
+        c = cl(ci)
+        prev_c = cl(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF(({c}{F_EQUITY_ROW}+{prev_c}{F_EQUITY_ROW})/2<>0,{c}{NI_ROW}/(({c}{F_EQUITY_ROW}+{prev_c}{F_EQUITY_ROW})/2),0)"
+        style_formula_cell(cell, FMT_PERCENT)
+
+    # Row 67: RNOA = NOPAT / Avg NOA
+    r = 67
+    write_label(ws, r, 1, "RNOA")
+    cell = ws.cell(row=r, column=2)
+    cell.value = f"=IF((B{F_NOA_ROW}+{ADJ}!D{ADJ_NOA})/2<>0,B{NOPAT_ROW}/((B{F_NOA_ROW}+{ADJ}!D{ADJ_NOA})/2),0)"
+    style_formula_cell(cell, FMT_PERCENT)
+    for ci in range(3, MAX_COL + 1):
+        c = cl(ci)
+        prev_c = cl(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"=IF(({c}{F_NOA_ROW}+{prev_c}{F_NOA_ROW})/2<>0,{c}{NOPAT_ROW}/(({c}{F_NOA_ROW}+{prev_c}{F_NOA_ROW})/2),0)"
+        style_formula_cell(cell, FMT_PERCENT)
+
+    # Row 68: FCF to Equity (absolute, for reference)
+    r = 68
+    write_label(ws, r, 1, "FCF to Equity")
+    for ci in range(2, MAX_COL + 1):
+        c = cl(ci)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={c}{F_FCF_EQ_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+
+    # --- Freeze panes at B4 ---
+    freeze_panes(ws, row=4, col=2)
+
+    return ws
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -1647,6 +2369,9 @@ def main():
 
     print("Building Ratio Comparison...")
     build_ratio_comparison(wb)
+
+    print("Building Forecast...")
+    build_forecast_tab(wb)
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
