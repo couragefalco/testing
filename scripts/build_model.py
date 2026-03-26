@@ -12,14 +12,26 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from scripts.formatting import (
     BLUE_FONT,
     BLACK_FONT,
+    BLACK_BOLD,
+    GREEN_FONT,
+    YELLOW_FILL,
     FMT_CURRENCY,
+    FMT_PERCENT,
     FMT_YEAR,
     style_input_cell,
+    style_formula_cell,
+    style_crossref_cell,
+    style_assumption_cell,
+    style_section_header,
+    style_total_row,
+    style_double_line_row,
+    write_year_headers,
+    write_label,
     set_column_widths,
     freeze_panes,
 )
 from openpyxl.utils import get_column_letter
-from scripts.data_maps import SOURCE_FILE
+from scripts.data_maps import SOURCE_FILE, COMPANY_INFO, YEARS
 
 OUTPUT_FILE = "output/ASM_Valuation_Model.xlsx"
 
@@ -214,6 +226,615 @@ def build_input_tabs(wb, source_wb):
 
 
 # ---------------------------------------------------------------------------
+# Standardized ASM tab
+# ---------------------------------------------------------------------------
+def build_standardized_asm(wb):
+    """Build the 'Std ASM' sheet with reformulated IS, BS, and CF.
+
+    The reformulated balance sheet separates operating, investment, and
+    financing items.  The accounting identity used is:
+
+        Business Assets (= NOA + Investment Assets)
+        = Net Debt + Equity  (= Invested Capital)
+
+    All data cells are Excel formulas referencing the Input tabs.
+    """
+    ws = wb.create_sheet(title="Std ASM")
+    MAX_COL = 7  # columns A-G
+
+    # Shortcuts to data maps
+    is_map = COMPANY_INFO['ASM']['is_map']
+    cf_map = COMPANY_INFO['ASM']['cf_map']
+    bs_map = COMPANY_INFO['ASM']['bs_map']
+    rep_bs = COMPANY_INFO['ASM_REPORTED']['bs_map']
+    rep_cf = COMPANY_INFO['ASM_REPORTED']['cf_map']
+
+    input_asm = "'Input ASM'"
+    input_rep = "'Input ASM (Reported)'"
+
+    # --- Column widths ---
+    widths = {1: 45}
+    for c in range(2, 8):
+        widths[c] = 14
+    set_column_widths(ws, widths=widths)
+
+    # --- Helper: write a cross-ref formula across years (with ISNUMBER guard) ---
+    def write_crossref_row(row, sheet, src_row, fmt=FMT_CURRENCY, guard=True):
+        """Write cross-sheet reference formulas across cols B-G."""
+        for ci in range(2, 8):
+            cl = get_column_letter(ci)
+            cell = ws.cell(row=row, column=ci)
+            if guard:
+                cell.value = f"=IF(ISNUMBER({sheet}!{cl}{src_row}),{sheet}!{cl}{src_row},0)"
+            else:
+                cell.value = f"={sheet}!{cl}{src_row}"
+            style_crossref_cell(cell, fmt)
+
+    def write_formula_row(row, formulas_by_col, fmt=FMT_CURRENCY, bold=False):
+        """Write formula strings across cols B-G. formulas_by_col is a callable(col_letter)->str."""
+        for ci in range(2, 8):
+            cl = get_column_letter(ci)
+            cell = ws.cell(row=row, column=ci)
+            cell.value = formulas_by_col(cl)
+            style_formula_cell(cell, fmt)
+            if bold:
+                cell.font = BLACK_BOLD
+
+    # =========================================================================
+    # Row 1-4: Title, subtitle, year headers
+    # =========================================================================
+    r = 1
+    cell = ws.cell(row=r, column=1, value="Standardized Financial Statements - ASM International NV")
+    cell.font = Font(size=14, bold=True, color="000000")
+
+    r = 2
+    ws.cell(row=r, column=1, value="(EUR 000)").font = Font(size=10, italic=True, color="666666")
+
+    r = 3
+    write_year_headers(ws, r, 2, YEARS)
+
+    r = 4  # blank
+
+    # =========================================================================
+    # Section 1: Assumptions (rows 5-7)
+    # =========================================================================
+    r = 5
+    write_label(ws, r, 1, "Operating cash %")
+    for ci in range(2, 8):
+        cell = ws.cell(row=r, column=ci, value=0.02)
+        style_assumption_cell(cell, FMT_PERCENT)
+
+    r = 6
+    write_label(ws, r, 1, "Tax rate (effective)")
+    write_crossref_row(r, input_asm, is_map['effective_tax_rate'], fmt=FMT_PERCENT, guard=True)
+
+    r = 7  # blank
+
+    # =========================================================================
+    # Section 2: INCOME STATEMENT (row 8 onwards)
+    # =========================================================================
+    r = 8
+    style_section_header(ws, r, MAX_COL, "INCOME STATEMENT")
+
+    # Row 9: Revenue
+    r = 9
+    write_label(ws, r, 1, "Revenue")
+    write_crossref_row(r, input_asm, is_map['revenue'])
+
+    # Row 10: Cost of Sales
+    r = 10
+    write_label(ws, r, 1, "Cost of Sales")
+    write_crossref_row(r, input_asm, is_map['cogs'])
+
+    # Row 11: Gross Profit = Revenue - COGS
+    r = 11
+    write_label(ws, r, 1, "Gross Profit", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}9-{cl}10", bold=True)
+
+    # Row 12: SG&A
+    r = 12
+    write_label(ws, r, 1, "SG&A", indent=2)
+    write_crossref_row(r, input_asm, is_map['sga'])
+
+    # Row 13: R&D
+    r = 13
+    write_label(ws, r, 1, "R&D", indent=2)
+    write_crossref_row(r, input_asm, is_map['rd'])
+
+    # Row 14: D&A (from CF supplemental -- memo line, already embedded in COGS)
+    r = 14
+    write_label(ws, r, 1, "Depreciation & Amortization", indent=2)
+    write_crossref_row(r, input_asm, cf_map['da_total'])
+
+    # Row 15: Other Operating Expense
+    r = 15
+    write_label(ws, r, 1, "Other Operating Expense", indent=2)
+    write_crossref_row(r, input_asm, is_map['other_operating_exp'])
+
+    # Row 16: Total Operating Expense = COGS + SGA + RD + DA + Other
+    r = 16
+    write_label(ws, r, 1, "Total Operating Expense", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}10+{cl}12+{cl}13+{cl}14+{cl}15", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 17: Recurring Operating Profit = Revenue - Total OpEx
+    r = 17
+    write_label(ws, r, 1, "Recurring Operating Profit", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}9-{cl}16", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 18: blank
+    r = 18
+
+    # Row 19: Non-recurring items header
+    r = 19
+    write_label(ws, r, 1, "Non-recurring items:", bold=True)
+
+    # Row 20: Gain/Loss on Sale of Investments
+    r = 20
+    write_label(ws, r, 1, "Gain/Loss on Sale of Investments", indent=2)
+    write_crossref_row(r, input_asm, is_map['gain_loss_sale_invest'])
+
+    # Row 21: Gain/Loss on Sale of Assets
+    r = 21
+    write_label(ws, r, 1, "Gain/Loss on Sale of Assets", indent=2)
+    write_crossref_row(r, input_asm, is_map['gain_loss_sale_assets'])
+
+    # Row 22: Asset Writedown
+    r = 22
+    write_label(ws, r, 1, "Asset Writedown", indent=2)
+    write_crossref_row(r, input_asm, is_map['asset_writedown'])
+
+    # Row 23: Other Unusual Items
+    r = 23
+    write_label(ws, r, 1, "Other Unusual Items", indent=2)
+    write_crossref_row(r, input_asm, is_map['other_unusual'])
+
+    # Row 24: Total Non-recurring = SUM(20:23)
+    r = 24
+    write_label(ws, r, 1, "Total Non-recurring", bold=True)
+    write_formula_row(r, lambda cl: f"=SUM({cl}20:{cl}23)", bold=True)
+
+    # Row 25: EBIT = Recurring Op Profit + Non-recurring
+    r = 25
+    write_label(ws, r, 1, "EBIT", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}17+{cl}24", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 26: blank
+    r = 26
+
+    # Row 27: Investment Income (Equity Method)
+    r = 27
+    write_label(ws, r, 1, "Investment Income (Equity Method)", indent=2)
+    write_crossref_row(r, input_asm, is_map['income_from_affiliates'])
+
+    # Row 28: Interest Income
+    r = 28
+    write_label(ws, r, 1, "Interest Income", indent=2)
+    write_crossref_row(r, input_asm, is_map['interest_income'])
+
+    # Row 29: Interest Expense
+    r = 29
+    write_label(ws, r, 1, "Interest Expense", indent=2)
+    write_crossref_row(r, input_asm, is_map['interest_expense'])
+
+    # Row 30: FX Gains/(Losses)
+    r = 30
+    write_label(ws, r, 1, "FX Gains/(Losses)", indent=2)
+    write_crossref_row(r, input_asm, is_map['fx_gains'])
+
+    # Row 31: Profit Before Tax = EBIT + 27 + 28 + 29 + 30
+    r = 31
+    write_label(ws, r, 1, "Profit Before Tax", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}25+{cl}27+{cl}28+{cl}29+{cl}30", bold=True)
+
+    # Row 32: Tax Expense
+    r = 32
+    write_label(ws, r, 1, "Tax Expense", indent=2)
+    write_crossref_row(r, input_asm, is_map['tax_expense'])
+
+    # Row 33: Net Income = PBT - Tax
+    r = 33
+    write_label(ws, r, 1, "Net Income", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}31-{cl}32", bold=True)
+    style_double_line_row(ws, r, MAX_COL)
+
+    # Row 34: blank
+    r = 34
+
+    # Row 35: Effective Tax Rate
+    r = 35
+    write_label(ws, r, 1, "Effective Tax Rate")
+    write_formula_row(r, lambda cl: f"=IF({cl}31<>0,{cl}32/{cl}31,0)", fmt=FMT_PERCENT)
+
+    # Row 36: NOPAT = Recurring Op Profit * (1 - ETR)
+    r = 36
+    write_label(ws, r, 1, "NOPAT", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}17*(1-{cl}35)", bold=True)
+
+    # Row 37: blank
+    r = 37
+
+    # Row 38: Shares Outstanding (diluted)
+    r = 38
+    write_label(ws, r, 1, "Shares Outstanding (diluted)")
+    write_crossref_row(r, input_asm, is_map['diluted_shares'])
+
+    # Row 39: EPS (diluted)  -- NI in thousands, shares in actuals
+    r = 39
+    write_label(ws, r, 1, "EPS (diluted)")
+    write_formula_row(r, lambda cl: f"=IF({cl}38<>0,{cl}33/{cl}38*1000,0)", fmt='#,##0.00;(#,##0.00);"-"')
+
+    # Row 40: Dividends per Share
+    r = 40
+    write_label(ws, r, 1, "Dividends per Share")
+    write_crossref_row(r, input_asm, is_map['dividends_per_share'], fmt='#,##0.00;(#,##0.00);"-"')
+
+    # Row 41-42: blank
+    r = 41
+    r = 42
+
+    # =========================================================================
+    # Section 3: BALANCE SHEET (row 43 onwards)
+    #
+    # Uses CapIQ standardized data for consistency.  CapIQ aggregates:
+    #   accounts_receivable = Reported AR + Contract Assets
+    #   net_ppe = Reported PPE + ROU Assets
+    #   other_intangibles + deferred_charges_lt = Reported Other Intangible Assets
+    #   other_lt_assets = Reported Other Assets + Employee Benefits + Eval Tools
+    #   lt_investments = Reported Invest in Associates + Other Investments
+    # We use Reported granularity for NCA breakdown so totals remain consistent.
+    # =========================================================================
+    r = 43
+    style_section_header(ws, r, MAX_COL, "BALANCE SHEET (Reformulated)")
+
+    # --- Operating Working Capital ---
+    r = 44
+    write_label(ws, r, 1, "Operating Working Capital:", bold=True)
+
+    # Row 45: Trade Receivables (CapIQ: includes contract assets)
+    r = 45
+    write_label(ws, r, 1, "Trade Receivables", indent=2)
+    write_crossref_row(r, input_asm, bs_map['accounts_receivable'])
+
+    # Row 46: + Other Receivables (Income Tax Receivable etc.)
+    r = 46
+    write_label(ws, r, 1, "+ Other Receivables", indent=2)
+    write_crossref_row(r, input_asm, bs_map['other_receivables'])
+
+    # Row 47: + Inventories
+    r = 47
+    write_label(ws, r, 1, "+ Inventories", indent=2)
+    write_crossref_row(r, input_asm, bs_map['inventory'])
+
+    # Row 48: + Prepaid & Other CA
+    r = 48
+    write_label(ws, r, 1, "+ Prepaid & Other CA", indent=2)
+    for ci in range(2, 8):
+        cl = get_column_letter(ci)
+        cell = ws.cell(row=r, column=ci)
+        prep_row = bs_map['prepaid_exp']
+        oca_row = bs_map['other_current_assets']
+        cell.value = (
+            f"=IF(ISNUMBER({input_asm}!{cl}{prep_row}),{input_asm}!{cl}{prep_row},0)"
+            f"+IF(ISNUMBER({input_asm}!{cl}{oca_row}),{input_asm}!{cl}{oca_row},0)"
+        )
+        style_crossref_cell(cell, FMT_CURRENCY)
+
+    # Row 49: - Accounts Payable
+    r = 49
+    write_label(ws, r, 1, "- Accounts Payable", indent=2)
+    write_crossref_row(r, input_asm, bs_map['accounts_payable'])
+
+    # Row 50: - Accrued Expenses
+    r = 50
+    write_label(ws, r, 1, "- Accrued Expenses", indent=2)
+    write_crossref_row(r, input_asm, bs_map['accrued_exp'])
+
+    # Row 51: - Unearned Revenue / Contract Liabilities
+    r = 51
+    write_label(ws, r, 1, "- Unearned Revenue / Contract Liabilities", indent=2)
+    write_crossref_row(r, input_asm, bs_map['unearned_revenue_curr'])
+
+    # Row 52: - Income Taxes Payable
+    r = 52
+    write_label(ws, r, 1, "- Income Taxes Payable", indent=2)
+    write_crossref_row(r, input_asm, bs_map['current_income_tax'])
+
+    # Row 53: - Other Current Liabilities
+    r = 53
+    write_label(ws, r, 1, "- Other Current Liabilities", indent=2)
+    write_crossref_row(r, input_asm, bs_map['other_current_liab'])
+
+    # Row 54: = Operating Working Capital
+    OWC_ROW = 54
+    r = OWC_ROW
+    write_label(ws, r, 1, "= Operating Working Capital", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}45+{cl}46+{cl}47+{cl}48-{cl}49-{cl}50-{cl}51-{cl}52-{cl}53", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 55: blank
+    r = 55
+
+    # --- Net Non-Current Operating Assets ---
+    r = 56
+    write_label(ws, r, 1, "Net Non-Current Operating Assets:", bold=True)
+
+    # Row 57: PP&E (net) - CapIQ net_ppe (= Reported PPE + ROU)
+    r = 57
+    write_label(ws, r, 1, "PP&E (net, incl. ROU)", indent=2)
+    write_crossref_row(r, input_asm, bs_map['net_ppe'])
+
+    # Row 58: + Goodwill
+    r = 58
+    write_label(ws, r, 1, "+ Goodwill", indent=2)
+    write_crossref_row(r, input_asm, bs_map['goodwill'])
+
+    # Row 59: + Other Intangible Assets
+    r = 59
+    write_label(ws, r, 1, "+ Other Intangible Assets", indent=2)
+    write_crossref_row(r, input_asm, bs_map['other_intangibles'])
+
+    # Row 60: + Deferred Tax Assets
+    r = 60
+    write_label(ws, r, 1, "+ Deferred Tax Assets", indent=2)
+    write_crossref_row(r, input_asm, bs_map['deferred_tax_assets'])
+
+    # Row 61: + Deferred Charges & Other LT Intangibles
+    r = 61
+    write_label(ws, r, 1, "+ Deferred Charges & LT Intangibles", indent=2)
+    write_crossref_row(r, input_asm, bs_map['deferred_charges_lt'])
+
+    # Row 62: + Other Non-Current Assets
+    r = 62
+    write_label(ws, r, 1, "+ Other Non-Current Assets", indent=2)
+    write_crossref_row(r, input_asm, bs_map['other_lt_assets'])
+
+    # Row 63: - Deferred Tax Liabilities
+    r = 63
+    write_label(ws, r, 1, "- Deferred Tax Liabilities", indent=2)
+    write_crossref_row(r, input_asm, bs_map['deferred_tax_liab'])
+
+    # Row 64: - Other Non-Current Liabilities
+    r = 64
+    write_label(ws, r, 1, "- Other Non-Current Liabilities", indent=2)
+    write_crossref_row(r, input_asm, bs_map['other_non_current_liab'])
+
+    # Note: Lease liabilities (non-current) are classified as financing,
+    # not deducted from operating NCA.
+
+    # Row 65: = Net Non-Current Operating Assets
+    NET_NCA_ROW = 65
+    r = NET_NCA_ROW
+    write_label(ws, r, 1, "= Net Non-Current Operating Assets", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}57+{cl}58+{cl}59+{cl}60+{cl}61+{cl}62-{cl}63-{cl}64", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 66: blank
+    r = 66
+
+    # Row 67: = Net Operating Assets = OWC + Net NCA
+    NOA_ROW = 67
+    r = NOA_ROW
+    write_label(ws, r, 1, "= Net Operating Assets", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}{OWC_ROW}+{cl}{NET_NCA_ROW}", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 68: blank
+    r = 68
+
+    # --- Investment Assets ---
+    r = 69
+    write_label(ws, r, 1, "Investment Assets:", bold=True)
+
+    # Row 70: Long-Term Investments (CapIQ = Reported Invest in Associates + Other Investments)
+    r = 70
+    write_label(ws, r, 1, "Long-Term Investments", indent=2)
+    write_crossref_row(r, input_asm, bs_map['lt_investments'])
+
+    # Row 71: = Total Investment Assets (single line item here)
+    INVEST_ASSETS_ROW = 71
+    r = INVEST_ASSETS_ROW
+    write_label(ws, r, 1, "= Total Investment Assets", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}70", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 72: blank
+    r = 72
+
+    # Row 73: = Business Assets = NOA + Investment Assets
+    BIZ_ASSETS_ROW = 73
+    r = BIZ_ASSETS_ROW
+    write_label(ws, r, 1, "= Business Assets", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}{NOA_ROW}+{cl}{INVEST_ASSETS_ROW}", bold=True)
+    style_double_line_row(ws, r, MAX_COL)
+
+    # Row 74: blank
+    r = 74
+
+    # --- Financing ---
+    r = 75
+    style_section_header(ws, r, MAX_COL, "FINANCING")
+
+    # Row 76: Lease Liabilities (current)
+    r = 76
+    write_label(ws, r, 1, "Lease Liabilities (current)", indent=2)
+    write_crossref_row(r, input_asm, bs_map['current_lease_liab'])
+
+    # Row 77: + Lease Liabilities (non-current)
+    r = 77
+    write_label(ws, r, 1, "+ Lease Liabilities (non-current)", indent=2)
+    write_crossref_row(r, input_asm, bs_map['lt_leases'])
+
+    # Row 78: = Total Debt
+    TOTAL_DEBT_ROW = 78
+    r = TOTAL_DEBT_ROW
+    write_label(ws, r, 1, "= Total Debt", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}76+{cl}77", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 79: Cash & Equivalents
+    r = 79
+    write_label(ws, r, 1, "Cash & Equivalents", indent=2)
+    write_crossref_row(r, input_asm, bs_map['cash'])
+
+    # Row 80: = Net Debt = Debt - Cash
+    NET_DEBT_ROW = 80
+    r = NET_DEBT_ROW
+    write_label(ws, r, 1, "= Net Debt", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}{TOTAL_DEBT_ROW}-{cl}79", bold=True)
+
+    # Row 81: Group Equity
+    EQUITY_ROW = 81
+    r = EQUITY_ROW
+    write_label(ws, r, 1, "Group Equity")
+    write_crossref_row(r, input_asm, bs_map['total_equity'])
+
+    # Row 82: = Invested Capital = Net Debt + Equity
+    # (Business Assets = NOA + Investment = Net Debt + Equity)
+    INVESTED_CAP_ROW = 82
+    r = INVESTED_CAP_ROW
+    write_label(ws, r, 1, "= Invested Capital", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}{NET_DEBT_ROW}+{cl}{EQUITY_ROW}", bold=True)
+    style_double_line_row(ws, r, MAX_COL)
+
+    # Row 83: BS Check (should = 0)
+    BS_CHECK_ROW = 83
+    r = BS_CHECK_ROW
+    write_label(ws, r, 1, "BS Check (should = 0)", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}{BIZ_ASSETS_ROW}-{cl}{INVESTED_CAP_ROW}", bold=True)
+
+    # Row 84-85: blank
+    r = 84
+    r = 85
+
+    # =========================================================================
+    # Section 4: CASH FLOW (row 86 onwards)
+    # =========================================================================
+    r = 86
+    style_section_header(ws, r, MAX_COL, "FREE CASH FLOW")
+
+    # Row 87: NOPAT (reference to IS NOPAT row 36)
+    NOPAT_CF_ROW = 87
+    r = NOPAT_CF_ROW
+    write_label(ws, r, 1, "NOPAT")
+    write_formula_row(r, lambda cl: f"={cl}36")
+
+    # Row 88: + D&A
+    DA_CF_ROW = 88
+    r = DA_CF_ROW
+    write_label(ws, r, 1, "+ D&A")
+    write_crossref_row(r, input_asm, cf_map['da_total'])
+
+    # Row 89: - Change in OWC (OWC(t) - OWC(t-1)), 2019 = 0
+    CHG_OWC_ROW = 89
+    r = CHG_OWC_ROW
+    write_label(ws, r, 1, "- Change in OWC")
+    # Col B (2019) = 0
+    cell = ws.cell(row=r, column=2, value=0)
+    style_formula_cell(cell, FMT_CURRENCY)
+    # Cols C-G = OWC(t) - OWC(t-1)
+    for ci in range(3, 8):
+        cl = get_column_letter(ci)
+        prev_cl = get_column_letter(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={cl}{OWC_ROW}-{prev_cl}{OWC_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+
+    # Row 90: - CapEx (absolute value -- source is negative)
+    CAPEX_CF_ROW = 90
+    r = CAPEX_CF_ROW
+    write_label(ws, r, 1, "- CapEx")
+    for ci in range(2, 8):
+        cl = get_column_letter(ci)
+        cell = ws.cell(row=r, column=ci)
+        src_row = cf_map['capex']
+        cell.value = f"=ABS(IF(ISNUMBER({input_asm}!{cl}{src_row}),{input_asm}!{cl}{src_row},0))"
+        style_crossref_cell(cell, FMT_CURRENCY)
+
+    # Row 91: - Purchase of Intangibles (absolute value)
+    PURCH_INTANG_ROW = 91
+    r = PURCH_INTANG_ROW
+    write_label(ws, r, 1, "- Purchase of Intangibles")
+    for ci in range(2, 8):
+        cl = get_column_letter(ci)
+        cell = ws.cell(row=r, column=ci)
+        src_row = cf_map['purchase_intangibles']
+        cell.value = f"=ABS(IF(ISNUMBER({input_asm}!{cl}{src_row}),{input_asm}!{cl}{src_row},0))"
+        style_crossref_cell(cell, FMT_CURRENCY)
+
+    # Row 92: = Operating CF after investment
+    OP_CF_ROW = 92
+    r = OP_CF_ROW
+    write_label(ws, r, 1, "= Operating CF after investment", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}{NOPAT_CF_ROW}+{cl}{DA_CF_ROW}-{cl}{CHG_OWC_ROW}-{cl}{CAPEX_CF_ROW}-{cl}{PURCH_INTANG_ROW}", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 93: blank
+    r = 93
+
+    # Row 94: + Net Investment Profit after tax = Invest Income * (1 - ETR)
+    NET_INV_PROFIT_ROW = 94
+    r = NET_INV_PROFIT_ROW
+    write_label(ws, r, 1, "+ Net Investment Profit after tax")
+    write_formula_row(r, lambda cl: f"={cl}27*(1-{cl}35)")
+
+    # Row 95: - Change in Investment Assets = InvestAssets(t) - InvestAssets(t-1)
+    CHG_INVEST_ROW = 95
+    r = CHG_INVEST_ROW
+    write_label(ws, r, 1, "- Change in Investment Assets")
+    # Col B (2019) = 0
+    cell = ws.cell(row=r, column=2, value=0)
+    style_formula_cell(cell, FMT_CURRENCY)
+    for ci in range(3, 8):
+        cl = get_column_letter(ci)
+        prev_cl = get_column_letter(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={cl}{INVEST_ASSETS_ROW}-{prev_cl}{INVEST_ASSETS_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+
+    # Row 96: = FCF to Debt & Equity
+    FCF_DE_ROW = 96
+    r = FCF_DE_ROW
+    write_label(ws, r, 1, "= FCF to Debt & Equity", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}{OP_CF_ROW}+{cl}{NET_INV_PROFIT_ROW}-{cl}{CHG_INVEST_ROW}", bold=True)
+    style_total_row(ws, r, MAX_COL)
+
+    # Row 97: - Interest Expense after tax = Interest Exp * (1 - ETR)
+    INT_AFTER_TAX_ROW = 97
+    r = INT_AFTER_TAX_ROW
+    write_label(ws, r, 1, "- Interest Expense after tax")
+    # Interest expense is row 29 in IS; typically negative (expense)
+    write_formula_row(r, lambda cl: f"={cl}29*(1-{cl}35)")
+
+    # Row 98: + Change in Debt = Debt(t) - Debt(t-1)
+    CHG_DEBT_ROW = 98
+    r = CHG_DEBT_ROW
+    write_label(ws, r, 1, "+ Change in Debt")
+    cell = ws.cell(row=r, column=2, value=0)
+    style_formula_cell(cell, FMT_CURRENCY)
+    for ci in range(3, 8):
+        cl = get_column_letter(ci)
+        prev_cl = get_column_letter(ci - 1)
+        cell = ws.cell(row=r, column=ci)
+        cell.value = f"={cl}{TOTAL_DEBT_ROW}-{prev_cl}{TOTAL_DEBT_ROW}"
+        style_formula_cell(cell, FMT_CURRENCY)
+
+    # Row 99: = FCF to Equity
+    FCF_EQ_ROW = 99
+    r = FCF_EQ_ROW
+    write_label(ws, r, 1, "= FCF to Equity", bold=True)
+    write_formula_row(r, lambda cl: f"={cl}{FCF_DE_ROW}-{cl}{INT_AFTER_TAX_ROW}+{cl}{CHG_DEBT_ROW}", bold=True)
+    style_double_line_row(ws, r, MAX_COL)
+
+    # --- Freeze panes at B5 ---
+    freeze_panes(ws, row=5, col=2)
+
+    return ws
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -228,6 +849,9 @@ def main():
 
     print("Building Input tabs...")
     build_input_tabs(wb, source_wb)
+
+    print("Building Std ASM...")
+    build_standardized_asm(wb)
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
